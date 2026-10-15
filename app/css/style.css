@@ -1,0 +1,104 @@
+:root {
+  --bg: #1b1a18;
+  --panel: #262522;
+  --text: #ece8e1;
+  --muted: #9a958c;
+  --accent: #d97757;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 system-ui, sans-serif;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 260px 12px 12px; /* leave room for the settings panel */
+}
+
+#frame {
+  position: relative;
+  box-shadow: 0 0 0 1px #444;
+}
+
+#frame canvas { display: block; width: 100%; height: 100%; }
+
+.bg-checker {
+  background-color: #3a3a3a;
+  background-image:
+    linear-gradient(45deg, #2c2c2c 25%, transparent 25%, transparent 75%, #2c2c2c 75%),
+    linear-gradient(45deg, #2c2c2c 25%, transparent 25%, transparent 75%, #2c2c2c 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 12px 12px;
+}
+.bg-dark { background: #101010; }
+.bg-light { background: #e9e6df; }
+.bg-green { background: #00b140; }
+.bg-blue { background: #23395b; }
+
+#transport {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 260px 10px 12px;
+  background: var(--panel);
+}
+
+#transport button {
+  width: 36px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#scrub { flex: 1; accent-color: var(--accent); }
+#clock { font-variant-numeric: tabular-nums; color: var(--muted); min-width: 70px; }
+
+#export-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+#export-overlay[hidden] { display: none; }
+#export-overlay .panel {
+  background: var(--panel);
+  padding: 18px 20px;
+  border-radius: 10px;
+  width: min(440px, 90vw);
+  display: grid;
+  gap: 10px;
+}
+#export-overlay progress { width: 100%; accent-color: var(--accent); }
+#export-detail { color: var(--muted); word-break: break-all; white-space: pre-wrap; }
+#export-overlay button {
+  justify-self: end;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: #444;
+  color: var(--text);
+  cursor: pointer;
+}

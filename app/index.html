@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SheetGlider</title>
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.esm.min.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <main id="stage">
+    <div id="frame" class="bg-checker">
+      <canvas id="view"></canvas>
+    </div>
+  </main>
+  <footer id="transport">
+    <button id="play" title="Play / pause (space)">▶</button>
+    <input id="scrub" type="range" min="0" max="10000" value="0" step="1">
+    <span id="clock">0:00.00</span>
+  </footer>
+  <div id="export-overlay" hidden>
+    <div class="panel">
+      <div id="export-title">Exporting…</div>
+      <progress id="export-progress" max="1" value="0"></progress>
+      <div id="export-detail"></div>
+      <button id="export-cancel">Cancel</button>
+      <button id="export-close" hidden>Close</button>
+    </div>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

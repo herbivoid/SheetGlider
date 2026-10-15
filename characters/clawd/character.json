@@ -1,0 +1,17 @@
+{
+  "name": "Clawd",
+  "pixelArt": true,
+  "anchor": [
+    0.5,
+    0.0
+  ],
+  "height": 3.0,
+  "facing": "right",
+  "sprites": {
+    "glide": "glide.png",
+    "anticipate": "anticipate.png",
+    "hit": "hit.png",
+    "ride": "ride.png",
+    "rest": "rest.png"
+  }
+}
