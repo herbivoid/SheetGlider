@@ -23,9 +23,20 @@ Load a **MusicXML** file (`.musicxml`, `.xml`, or compressed `.mxl`) with **Load
 - One instrument is used: a single staff, or both staves of a piano part.
 - The tempo comes from the file's metronome marks (tempo changes included). The **tempo** setting scales it.
 - **Clawd follows** picks the top staff, the bottom staff, or the highest note.
-- Repeats are played as written, not expanded. Grace notes are skipped.
+- **Play repeats** (on by default) plays repeats and 1st/2nd endings as performed. Turn it off to play straight through as written.
 
-`examples/piano-example.musicxml` is a short test piece for the grand staff.
+Notation drawn:
+- notes, chords (seconds offset, accidentals stacked) and rests
+- beams (as in the file, or automatic when the file has none), flags, dots and ledger lines
+- ties, slurs, and tuplet numbers and brackets
+- grace notes (shown small, played just before their main note)
+- clef, key and time signature changes
+
+Not drawn yet: dynamics, articulations, lyrics, repeat signs.
+
+Examples in `examples/`:
+- `piano-example.musicxml`: a short grand-staff piece
+- `notation-test.musicxml`: exercises all of the notation above
 
 ## Output formats
 

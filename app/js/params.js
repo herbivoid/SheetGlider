@@ -20,8 +20,8 @@ export const params = {
   quarterWidth: 4.5,
   spacingExponent: 0.65,
   speedSmoothing: 0.75,
-  barGap: 1.6,
-  accidentalGap: 1.0,
+  barGap: 2.2,
+  repeats: true,      // play repeats (and 1st/2nd endings) as performed
   // Ribbon
   preset: "twist",
   readability: 0.6,

@@ -38,10 +38,6 @@ const timeSigDigit = d => String.fromCharCode(0xE080 + d);
 
 const HEAD_W = 1.18;      // black/half notehead width
 const WHOLE_W = 1.69;
-const STEM_W = 0.12;
-const STEM_ATTACH_Y = 0.168;
-const STEM_LEN = 3.5;
-const FLAGS = { eighth: 1, "16th": 2, "32nd": 3 };
 
 // Box: x from -left..right, y from -down..up, in staff spaces, origin = anchor.
 function canvasGlyph(left, right, down, up, draw) {
@@ -82,7 +78,24 @@ function textWidth(ctx, text) {
 function build(kind) {
   const [group, a, b] = kind.split(":");
   switch (group) {
-    case "note": return noteGlyph(a, b, kind.endsWith(":noflag"));
+    // Noteheads, anchored at their center.
+    case "head": return canvasGlyph(1.0, 1.0, 0.75, 0.75, ctx => {
+      const ch = { whole: G.noteheadWhole, half: G.noteheadHalf }[a] ?? G.noteheadBlack;
+      music(ctx, ch, -(a === "whole" ? WHOLE_W : HEAD_W) / 2, 0);
+    });
+    // Flags, anchored where they join the stem: its left edge, at the stem's end.
+    case "flag": {
+      const up = b === "up";
+      const ch = G[`flag${flagName(a)}${up ? "Up" : "Down"}`];
+      return up
+        ? canvasGlyph(0.2, 1.6, 4.0, 0.4, ctx => music(ctx, ch, 0, 0))
+        : canvasGlyph(0.2, 1.6, 0.4, 4.0, ctx => music(ctx, ch, 0, 0));
+    }
+    // Tuplet number, centered.
+    case "tuplet": return canvasGlyph(1.2, 1.2, 0.9, 0.9, ctx => {
+      const text = [...a].map(d => String.fromCharCode(0xE880 + Number(d))).join("");
+      centered(ctx, text);
+    });
     // Accidentals are anchored at their right edge, on their staff position.
     case "acc": return canvasGlyph(2.0, 0, 2.2, 2.6, ctx => {
       const ch = G[a] ?? G.natural;
@@ -119,27 +132,17 @@ function build(kind) {
   }
 }
 
-// Notehead (+ stem + flags), anchored at the notehead's center.
-function noteGlyph(type, stem, noFlag) {
-  const up = stem === "up";
-  return canvasGlyph(1.0, 2.0, 4.6, 4.6, ctx => {
-    if (type === "whole") {
-      music(ctx, G.noteheadWhole, -WHOLE_W / 2, 0);
-      return;
-    }
-    music(ctx, type === "half" ? G.noteheadHalf : G.noteheadBlack, -HEAD_W / 2, 0);
-    const flags = noFlag ? 0 : FLAGS[type] ?? 0;
-    const len = STEM_LEN + Math.max(0, flags - 1) * 0.5;
-    if (up) {
-      const x = HEAD_W / 2 - STEM_W;
-      ctx.fillRect(x, STEM_ATTACH_Y, STEM_W, len - STEM_ATTACH_Y);
-      if (flags) music(ctx, G[`flag${flagName(type)}Up`], x, len);
-    } else {
-      const x = -HEAD_W / 2;
-      ctx.fillRect(x, -len, STEM_W, len - STEM_ATTACH_Y);
-      if (flags) music(ctx, G[`flag${flagName(type)}Down`], x, -len);
-    }
-  });
+// Draws text with its ink centered on the anchor.
+function centered(ctx, text) {
+  ctx.save();
+  const m = ctx.getTransform();
+  ctx.setTransform(1, 0, 0, 1, m.e, m.f);
+  ctx.font = `${4 * PX}px ${FONT}`;
+  const t = ctx.measureText(text);
+  const x = (t.actualBoundingBoxLeft - t.actualBoundingBoxRight) / 2;
+  const y = (t.actualBoundingBoxAscent - t.actualBoundingBoxDescent) / 2;
+  ctx.fillText(text, x, y);
+  ctx.restore();
 }
 
 const flagName = type => ({ eighth: "8th", "16th": "16th", "32nd": "32nd" }[type]);

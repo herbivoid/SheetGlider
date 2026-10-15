@@ -135,7 +135,7 @@ class ExportJob:
 JOBS = {}
 
 
-def parse_upload(name, data):
+def parse_upload(name, data, expand_repeats):
     """Parses an uploaded MusicXML file into the browser's raw score format."""
     from .musicxml import parse_file
 
@@ -145,7 +145,7 @@ def parse_upload(name, data):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / ("score" + suffix)
         path.write_bytes(data)
-        result = parse_file(path)
+        result = parse_file(path, expand_repeats)
     if result["title"] == "score":
         result["title"] = Path(name).stem
     return result
@@ -214,7 +214,8 @@ class Handler(SimpleHTTPRequestHandler):
                 JOBS[job_id] = job
                 self.send_json({"id": job_id, "path": str(job.path)})
             elif url.path == "/api/parse":
-                self.send_json(parse_upload(query.get("name", ["score.musicxml"])[0], body))
+                self.send_json(parse_upload(query.get("name", ["score.musicxml"])[0], body,
+                                            query.get("repeats", ["1"])[0] == "1"))
             elif url.path == "/api/export/audio":
                 self.send_json(save_audio(query.get("video", [""])[0], body))
             elif url.path == "/api/export/frame":

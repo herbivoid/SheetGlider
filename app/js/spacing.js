@@ -5,31 +5,29 @@
 // and give fast notes more room. The resulting speed is then smoothed over time
 // (Gaussian, `smoothBeats` wide) so the character speeds up and slows down
 // gradually instead of jumping between speeds at every note.
+//
+// `extras` (from engrave.measureExtras) is extra room needed just before some
+// beats: barlines, clef/key/time changes, accidentals, grace notes. It's added
+// to the gap leading up to that beat and only lightly smoothed, so it stays
+// where it's needed.
 
 const RES = 1 / 48; // grid resolution in beats
 
-export function buildSpacing(score, { quarterWidth, exponent, smoothBeats, barGap, accidentalGap }) {
+export function buildSpacing(score, { quarterWidth, exponent, smoothBeats, extras }) {
   const onsets = new Set([0, score.endBeat]);
   for (const n of score.notes) onsets.add(n.start);
   for (const r of score.rests) onsets.add(r.start);
-  const times = [...onsets].sort((a, b) => a - b);
-
+  for (const b of score.bars) onsets.add(b);
+  const times = [...onsets].filter(b => b <= score.endBeat + 1e-9).sort((a, b) => a - b);
   const key = b => Math.round(b * 960);
-  const barSet = new Set(score.bars.map(key));
-  const accidentalSet = new Set(score.notes.filter(n => n.accidental !== null).map(n => key(n.start)));
 
   // Speed (staff spaces per beat) of each segment between consecutive onsets.
-  // Extra room before barlines and accidentals is kept separate: it must stay
-  // right where it's needed, so it only gets a light smoothing below.
   const segSpeed = [];
   const segExtra = [];
   for (let s = 0; s < times.length - 1; s++) {
-    const gap = times[s + 1] - times[s];
-    let extra = 0;
-    if (barSet.has(key(times[s + 1]))) extra += barGap;
-    if (accidentalSet.has(key(times[s + 1]))) extra += accidentalGap;
+    const gap = Math.max(1e-6, times[s + 1] - times[s]);
     segSpeed.push((quarterWidth * Math.pow(gap, exponent)) / gap);
-    segExtra.push(extra / gap);
+    segExtra.push((extras.get(key(times[s + 1])) ?? 0) / gap);
   }
 
   // Sample on a fine grid so it can be smoothed.
@@ -45,7 +43,7 @@ export function buildSpacing(score, { quarterWidth, exponent, smoothBeats, barGa
   }
 
   const base = smooth(raw, smoothBeats / RES);
-  const extra = smooth(rawExtra, Math.min(smoothBeats, 0.1) / RES);
+  const extra = smoothBackward(rawExtra, Math.min(smoothBeats, 0.15) / RES);
   const speed = base.map((v, i) => v + extra[i]);
   const xs = new Float64Array(cells + 1);
   for (let i = 0; i < cells; i++) xs[i + 1] = xs[i] + speed[i] * RES;
@@ -60,12 +58,24 @@ export function buildSpacing(score, { quarterWidth, exponent, smoothBeats, barGa
       const i = Math.min(cells - 1, Math.floor(beat / RES));
       return xs[i] + speed[i] * (beat - i * RES);
     },
-    speedAt(beat) {
-      if (beat <= 0) return first;
-      if (beat >= score.endBeat) return last;
-      return speed[Math.min(cells - 1, Math.floor(beat / RES))];
-    },
   };
+}
+
+// Like smooth(), but only spreads each value toward earlier cells, so room
+// reserved before a beat stays entirely before it.
+function smoothBackward(values, sigma) {
+  if (sigma < 0.5) return values;
+  const radius = Math.ceil(sigma * 3);
+  const kernel = [];
+  for (let k = 0; k <= radius; k++) kernel.push(Math.exp(-0.5 * (k / sigma) ** 2));
+  const wsum = kernel.reduce((a, b) => a + b, 0);
+  const n = values.length;
+  const out = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (!values[j]) continue;
+    for (let k = 0; k <= radius; k++) out[Math.max(0, j - k)] += (values[j] * kernel[k]) / wsum;
+  }
+  return out;
 }
 
 function smooth(values, sigma) {

@@ -4,6 +4,7 @@ import { buildSpacing } from "./spacing.js";
 import { Ribbon } from "./ribbon.js";
 import { buildShape } from "./presets.js";
 import { StaffView, headerLayout } from "./staff.js";
+import { measureExtras } from "./engrave.js";
 import { CharacterView, loadCharacter } from "./character.js";
 import { Particles } from "./particles.js";
 import { FollowCamera } from "./camera.js";
@@ -42,13 +43,14 @@ function rebuild() {
     world.particles.dispose();
   }
   const score = finalizeScore(raw, params.bpm / rawBpm());
+  const extras = measureExtras(score, params);
   const spacing = buildSpacing(score, {
     quarterWidth: params.quarterWidth, exponent: params.spacingExponent,
-    smoothBeats: params.speedSmoothing, barGap: params.barGap, accidentalGap: params.accidentalGap,
+    smoothBeats: params.speedSmoothing, extras: extras.extras,
   });
   const length = headerLayout(score).width + spacing.x(score.endBeat) + 3;
   const ribbon = new Ribbon(buildShape(params.preset, length, params));
-  const staff = new StaffView({ score, spacing, ribbon, params });
+  const staff = new StaffView({ score, spacing, ribbon, params, extras });
   const sOf = beat => staff.sOf(beat);
   const follow = params.follow === "top" || params.follow < score.staves.length ? params.follow : 0;
   const hero = new CharacterView({ character, score, ribbon, params, sOf, follow });
@@ -110,13 +112,17 @@ fileInput.addEventListener("change", () => {
   fileInput.value = "";
 });
 
+let lastFile = null; // re-read when the repeats setting changes
+
 async function loadScoreFile(file) {
   notify(`Reading ${file.name}…`);
   try {
-    const res = await fetch(`/api/parse?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
+    const query = `name=${encodeURIComponent(file.name)}&repeats=${params.repeats ? 1 : 0}`;
+    const res = await fetch(`/api/parse?${query}`, { method: "POST", body: file });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
     if (!data.notes.length) throw new Error("no notes found in this file");
+    lastFile = file;
     useScore(data);
     notify([`Loaded “${data.title}”.`, ...(data.warnings ?? [])].join(" "));
   } catch (err) {
@@ -260,7 +266,8 @@ async function main() {
     rebuild,
     setBackground,
     loadFile: () => fileInput.click(),
-    useDemo: () => { useScore(demoRaw()); notify("Using the demo melody."); },
+    useDemo: () => { lastFile = null; useScore(demoRaw()); notify("Using the demo melody."); },
+    reloadFile: () => { if (lastFile) loadScoreFile(lastFile); },
     exportVideo: () => runExport(),
     restyleStaff: c => world.staff.lineMaterial.color.set(c),
   });

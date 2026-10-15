@@ -13,6 +13,7 @@ export function buildGui(params, actions) {
   music.add(scoreInfo, "name").name("score").disable();
   music.add({ load: actions.loadFile }, "load").name("📂 Load MusicXML…");
   music.add({ demo: actions.useDemo }, "demo").name("Use demo melody");
+  music.add(params, "repeats").name("play repeats").onChange(actions.reloadFile);
   const bpm = music.add(params, "bpm", 20, 300, 1).name("tempo (bpm)").onFinishChange(re);
   music.add(params, "follow", { "top staff": 0, "bottom staff": 1, "highest note": "top" })
     .name("Clawd follows").onChange(re);

@@ -3,11 +3,19 @@
 
 function scheduleNotes(ctx, destination, score, fromSec, startAt) {
   const voices = [];
+  const sounds = [];
   for (const n of score.notes) {
     if (n.tieFromPrev) continue; // tied notes sound as one long note
-    const on = score.timeOf(n.start) - fromSec;
+    const len = (score.timeOf(n.start + n.soundingDur) - score.timeOf(n.start)) * 0.95;
+    sounds.push({ midi: n.midi, on: score.timeOf(n.start), len });
+  }
+  for (const g of score.graces) {
+    sounds.push({ midi: g.midi, on: score.timeOf(g.start) - 0.07 * (g.groupSize - g.order), len: 0.06 });
+  }
+  for (const n of sounds) {
+    const on = n.on - fromSec;
     if (on < 0) continue;
-    const len = Math.max(0.08, (score.timeOf(n.start + n.soundingDur) - score.timeOf(n.start)) * 0.95);
+    const len = Math.max(0.06, n.len);
     const osc = ctx.createOscillator();
     osc.type = "triangle";
     osc.frequency.value = 440 * 2 ** ((n.midi - 69) / 12);

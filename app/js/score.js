@@ -82,6 +82,19 @@ export function keyAlter(step, fifths) {
   return 0;
 }
 
+// Value in force at `beat` from an initial value and a list of { beat, ... } changes.
+function timeline(initial, changes, pick) {
+  const list = [...(changes ?? [])].sort((a, b) => a.beat - b.beat);
+  return beat => {
+    let v = initial;
+    for (const c of list) {
+      if (c.beat > beat + 1e-6) break;
+      v = pick(c);
+    }
+    return v;
+  };
+}
+
 // Turns a raw score into the model the renderer uses. `tempoScale` multiplies
 // every tempo (the "bpm" setting).
 export function finalizeScore(raw, tempoScale = 1) {
@@ -91,30 +104,67 @@ export function finalizeScore(raw, tempoScale = 1) {
     while (i < bars.length && bars[i] <= beat + 1e-6) i++;
     return i;
   };
+  const keyAt = timeline(raw.keyFifths ?? 0, raw.keyChanges, k => k.fifths);
+  const timeAt = timeline(raw.timeSig ?? [4, 4], raw.timeChanges, t => [t.num, t.den]);
+  const clefChanges = raw.clefChanges ?? [];
+  const clefLines = raw.staves.map((s, i) => timeline(s.clef ?? "treble",
+    clefChanges.filter(c => c.staff === i), c => c.clef));
+  const clefAt = (staff, beat) => (clefLines[staff] ?? clefLines[0])(beat);
 
-  const notes = raw.notes
-    .filter(n => n.dur > 0)
-    .map(n => {
-      const pitch = { step: n.step, alter: n.alter ?? 0, octave: n.octave };
-      const clef = raw.staves[n.staff]?.clef ?? "treble";
-      return {
-        staff: n.staff, start: n.start, dur: n.dur, type: n.type, dots: n.dots ?? 0, pitch,
-        midi: midiOf(pitch), pos: staffPosition(pitch, clef),
-        tieFromPrev: !!n.tieStop, tieToNext: !!n.tieStart,
-      };
-    })
+  const makeNote = (n, i) => {
+    const pitch = { step: n.step, alter: n.alter ?? 0, octave: n.octave };
+    return {
+      staff: n.staff, start: n.start, dur: n.dur ?? 0, type: n.type, dots: n.dots ?? 0, pitch,
+      midi: midiOf(pitch), pos: staffPosition(pitch, clefAt(n.staff, n.start)),
+      el: n.el ?? `n${i}`, voice: n.voice ?? "1",
+      tieFromPrev: !!n.tieStop, tieToNext: !!n.tieStart,
+      stem: n.stem ?? null, beams: n.beams ?? null, tuplet: n.tuplet ?? null,
+    };
+  };
+  const notes = raw.notes.filter(n => n.dur > 0).map(makeNote)
     .sort((a, b) => a.start - b.start || a.staff - b.staff || b.pos - a.pos);
   notes.forEach((n, i) => { n.id = i; });
+  const graces = (raw.graces ?? []).map((g, i) => ({ ...makeNote({ ...g, dur: 0 }, `g${i}`), slash: !!g.slash }));
+  // Position of each grace note within its group (graces before the same main note).
+  const graceGroups = new Map();
+  graces.forEach((g, i) => {
+    g.id = i;
+    const key = `${g.staff}|${g.start}`;
+    if (!graceGroups.has(key)) graceGroups.set(key, []);
+    const group = graceGroups.get(key);
+    if (!group.some(x => x.el === g.el)) group.push(g); // chord graces share one slot
+    g.order = group.findIndex(x => x.el === g.el);
+  });
+  for (const g of graces) g.groupSize = graceGroups.get(`${g.staff}|${g.start}`).length;
 
   // Accidentals: show one when the alteration differs from what's in force at
   // that staff position in this bar (key signature, or an earlier accidental).
+  // Grace notes come just before the main notes they share a start with.
   const state = new Map();
-  for (const n of notes) {
+  const ordered = [...graces.map(g => [g, 0]), ...notes.map(n => [n, 1])]
+    .sort((a, b) => a[0].start - b[0].start || a[1] - b[1]);
+  for (const [n] of ordered) {
     const key = `${n.staff}:${barIndex(n.start)}:${n.pitch.step}${n.pitch.octave}`;
-    const current = state.has(key) ? state.get(key) : keyAlter(n.pitch.step, raw.keyFifths);
+    const current = state.has(key) ? state.get(key) : keyAlter(n.pitch.step, keyAt(n.start));
     n.accidental = n.pitch.alter !== current && !n.tieFromPrev ? n.pitch.alter : null;
     state.set(key, n.pitch.alter);
   }
+
+  // Elements: a single note, or all the notes of a chord.
+  const elements = new Map();
+  for (const n of notes) {
+    if (!elements.has(n.el)) {
+      elements.set(n.el, {
+        id: n.el, staff: n.staff, voice: n.voice, start: n.start, dur: n.dur, type: n.type,
+        dots: n.dots, stem: n.stem, beams: n.beams, tuplet: n.tuplet, notes: [],
+      });
+    }
+    elements.get(n.el).notes.push(n);
+  }
+  const elementList = [...elements.values()].sort((a, b) => a.start - b.start);
+  const beamGroups = notes.some(n => n.beams?.length)
+    ? explicitBeams(elementList)
+    : autoBeams(elementList, bars, timeAt);
 
   // Tie chains: the first note sounds for the whole chain.
   for (const n of notes) {
@@ -137,14 +187,74 @@ export function finalizeScore(raw, tempoScale = 1) {
     staves: raw.staves,
     keyFifths: raw.keyFifths ?? 0,
     timeSig: raw.timeSig ?? [4, 4],
+    keyChanges: raw.keyChanges ?? [],
+    timeChanges: raw.timeChanges ?? [],
+    clefChanges,
+    keyAt, timeAt, clefAt,
     bpm: tempo.segs[0].bpm,
     notes,
+    graces,
+    elements: elementList,
+    beamGroups,
+    slurs: raw.slurs ?? [],
+    tuplets: raw.tuplets ?? [],
     rests: raw.rests.map(r => ({ ...r, dots: r.dots ?? 0 })),
     bars,
     endBeat: raw.endBeat,
     timeOf: tempo.timeOf,
     beatAt: tempo.beatAt,
   };
+}
+
+const FLAG_COUNT = { eighth: 1, "16th": 2, "32nd": 3 };
+export const flagCount = type => FLAG_COUNT[type] ?? 0;
+
+// Beam groups as written in the file: runs from a "start" to a "stop" on the
+// first beam, per staff and voice. Returns arrays of elements.
+function explicitBeams(elements) {
+  const groups = [];
+  const open = new Map(); // staff|voice -> current group
+  for (const e of elements) {
+    const lane = `${e.staff}|${e.voice}`;
+    const first = e.beams?.[0];
+    if (!first) { open.delete(lane); continue; }
+    let g = open.get(lane);
+    if (first === "start" || !g) {
+      g = [];
+      groups.push(g);
+      open.set(lane, g);
+    }
+    g.push(e);
+    if (first === "stop") open.delete(lane);
+  }
+  return groups.filter(g => g.length > 1);
+}
+
+// No beams in the file (like the demo): beam consecutive eighths-and-shorter
+// within each beat (dotted-quarter beats in 6/8, 9/8, 12/8).
+function autoBeams(elements, bars, timeAt) {
+  const groups = [];
+  const open = new Map();
+  for (const e of elements) {
+    const lane = `${e.staff}|${e.voice}`;
+    const [num, den] = timeAt(e.start);
+    const unit = den === 8 && num % 3 === 0 ? 1.5 : 1;
+    const barStart = [0, ...bars].filter(b => b <= e.start + 1e-6).pop();
+    const beat = Math.floor((e.start - barStart) / unit + 1e-6);
+    const g = open.get(lane);
+    const fits = flagCount(e.type) > 0;
+    if (fits && g && g.beat === beat && g.barStart === barStart && Math.abs(g.end - e.start) < 1e-6) {
+      g.items.push(e);
+      g.end = e.start + e.dur;
+    } else if (fits) {
+      const ng = { beat, barStart, end: e.start + e.dur, items: [e] };
+      groups.push(ng);
+      open.set(lane, ng);
+    } else {
+      open.delete(lane);
+    }
+  }
+  return groups.map(g => g.items).filter(items => items.length > 1);
 }
 
 function tempoMap(list, scale) {
