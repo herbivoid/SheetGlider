@@ -9,13 +9,35 @@ import * as THREE from "three";
 // (ax, ay) is the anchor as a 0..1 fraction from the bottom-left of the quad.
 
 const PX = 96; // canvas pixels per staff space
-const FONT = "Bravura";
+
+// Music fonts that follow SMuFL, so any of them can be swapped in.
+export const MUSIC_FONTS = {
+  Bravura: "fonts/Bravura.woff2",   // Steinberg's standard engraving look
+  Leland: "fonts/Leland.otf",       // MuseScore's default
+  Petaluma: "fonts/Petaluma.woff2", // handwritten, jazz-chart style
+};
+let FONT = "SG-Bravura";
+const loaded = new Set();
 const cache = new Map();
 
-export async function loadMusicFont() {
-  const face = new FontFace(FONT, "url(fonts/Bravura.woff2)");
-  await face.load();
-  document.fonts.add(face);
+// Loads a music font (once) and makes it the one glyphs are drawn with.
+export async function setMusicFont(name) {
+  const file = MUSIC_FONTS[name] ?? MUSIC_FONTS.Bravura;
+  const family = `SG-${name in MUSIC_FONTS ? name : "Bravura"}`; // avoid clashing with installed fonts
+  if (!loaded.has(family)) {
+    const face = new FontFace(family, `url(${file})`);
+    await face.load();
+    document.fonts.add(face);
+    loaded.add(family);
+  }
+  if (family === FONT && cache.size) return;
+  FONT = family;
+  for (const g of cache.values()) g.texture.dispose();
+  cache.clear();
+  // Noteheads differ in width between fonts; stems, ledger lines etc. follow them.
+  const ctx = document.createElement("canvas").getContext("2d");
+  METRICS.noteHead = textWidth(ctx, G.noteheadBlack);
+  METRICS.wholeHead = textWidth(ctx, G.noteheadWhole);
 }
 
 export function glyph(kind) {
@@ -36,8 +58,6 @@ const G = {
 };
 const timeSigDigit = d => String.fromCharCode(0xE080 + d);
 
-const HEAD_W = 1.18;      // black/half notehead width
-const WHOLE_W = 1.69;
 
 // Box: x from -left..right, y from -down..up, in staff spaces, origin = anchor.
 function canvasGlyph(left, right, down, up, draw) {
@@ -79,9 +99,9 @@ function build(kind) {
   const [group, a, b] = kind.split(":");
   switch (group) {
     // Noteheads, anchored at their center.
-    case "head": return canvasGlyph(1.0, 1.0, 0.75, 0.75, ctx => {
+    case "head": return canvasGlyph(1.3, 1.3, 0.85, 0.85, ctx => {
       const ch = { whole: G.noteheadWhole, half: G.noteheadHalf }[a] ?? G.noteheadBlack;
-      music(ctx, ch, -(a === "whole" ? WHOLE_W : HEAD_W) / 2, 0);
+      music(ctx, ch, -textWidth(ctx, ch) / 2, 0);
     });
     // Flags, anchored where they join the stem: its left edge, at the stem's end.
     case "flag": {
@@ -174,4 +194,5 @@ function glowGlyph() {
 }
 
 // Width (staff spaces) a few header items need, for laying out the start of the staff.
-export const METRICS = { clef: 2.8, keyAccidental: 1.0, timeSig: 2.0, noteHead: HEAD_W };
+// noteHead / wholeHead are measured from the current music font (setMusicFont).
+export const METRICS = { clef: 2.8, keyAccidental: 1.0, timeSig: 2.0, noteHead: 1.18, wholeHead: 1.69 };

@@ -154,6 +154,22 @@ class ExportJob:
 JOBS = {}
 
 
+def list_characters():
+    """Character folders in characters/ (any folder with a character.json), Clawd first."""
+    found = []
+    for folder in sorted((ROOT / "characters").iterdir()):
+        meta = folder / "character.json"
+        if not meta.is_file():
+            continue
+        try:
+            name = json.loads(meta.read_text(encoding="utf-8")).get("name") or folder.name
+        except (OSError, ValueError):
+            continue
+        found.append({"id": folder.name, "name": str(name)})
+    found.sort(key=lambda c: c["id"] != "clawd")
+    return found
+
+
 def parse_upload(name, data, expand_repeats):
     """Parses an uploaded MusicXML file into the browser's raw score format."""
     from .musicxml import parse_file
@@ -214,6 +230,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
         elif path == "/api/info":
             self.send_json({"ffmpeg": shutil.which("ffmpeg") is not None, "output": str(OUTPUT)})
+        elif path == "/api/characters":
+            self.send_json(list_characters())
         else:
             super().do_GET()
 

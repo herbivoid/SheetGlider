@@ -66,9 +66,14 @@ Pick a **shape** preset: flat, arch, valley, waterslide, approach, fly-in, fly-a
 - extra waves
 - two extra twists, each placed anywhere along the piece (0 = start, 1 = end) and spread over any length
 
-## Custom characters
+## Characters
 
-A character is a folder in `characters/` holding `character.json` and up to 6 images:
+Pick one in the **Character** panel. There are two ways to add your own:
+
+- **Load custom character…**: select the character's PNG images, plus its `character.json` if it has one. They're read in the browser and kept in that browser's own storage on your computer. Nothing is uploaded anywhere. Limits: PNG only, at most 4 MB and 2048×2048 pixels per image.
+- **Built-in:** put a folder in `characters/` (like `characters/clawd/`). It shows up in the list for everyone using this copy of the app.
+
+A character has up to 6 images:
 
 | Sprite | When it's shown |
 |---|---|
@@ -79,7 +84,15 @@ A character is a folder in `characters/` holding `character.json` and up to 6 im
 | `rest` | Floating during rests |
 | `surf` | Gliding through a fast run (falls back to `ride`) |
 
-In `character.json`, `anchor` is the point that touches the note, as fractions from the bottom-left of the image (`[0.5, 0]` means bottom-center). Set `pixelArt: true` to keep pixel art crisp. Clawd's sprites are generated from the ASCII grids in `tools/make_clawd.py`; edit those and re-run the script to change him.
+Name the images after their state (`glide.png`, `hit.png`, …). A single image works too: it's used for everything.
+
+`character.json` is optional. It can hold:
+- `name`
+- `anchor`: the point that touches the note, as fractions from the bottom-left of the image (`[0.5, 0]` means bottom-center, the default)
+- `pixelArt: true`: keeps pixel art crisp. Without it, images up to 256 pixels are treated as pixel art.
+- `sprites`: maps states to file names
+
+Clawd's sprites are generated from the ASCII grids in `tools/make_clawd.py`; edit those and re-run the script to change him.
 
 **Motion** settings control:
 - which notes count as **long** (*celebrate notes ≥*, in seconds)
@@ -90,6 +103,24 @@ All of these are based on real time, so the tempo matters as well as the note ty
 
 **Chord clones:** when the character lands on a chord, see-through clones split off, land on the other notes of the chord, fan out so they don't pile up, then merge back into him. They can come from the same staff or from every staff, or be turned off. You can also set how many clones a chord gets and how see-through they are.
 
+## Music fonts
+
+Under **Look → music font**:
+- **Bravura:** classic engraving
+- **Leland:** MuseScore's look
+- **Petaluma:** handwritten, jazz-chart style
+
+## Looks
+
+A *look* is all your visual settings: shape, tweaks, colors, motion, camera, character, music font. Settings tied to a particular score (tempo, followed staff, repeats), the preview, and the export aren't part of it.
+
+- **Save look… / Load look…** (in **Looks**) write and read a small `.sheetglider-look.json` file, to reuse on another song or share.
+- The app also remembers your last look in the browser, so it comes back next time.
+- **Reset look to defaults** starts fresh.
+- A loaded look only takes settings it recognizes, with valid values. If it uses a custom character this browser doesn't have, you get the default character.
+
 ## Credits
 
-Music glyphs: [Bravura](https://github.com/steinbergmedia/bravura) by Steinberg, under the SIL Open Font License (`app/fonts/Bravura-LICENSE.txt`).
+Music fonts, all under the SIL Open Font License (license files in `app/fonts/`):
+- [Bravura](https://github.com/steinbergmedia/bravura) and [Petaluma](https://github.com/steinbergmedia/petaluma) by Steinberg
+- [Leland](https://github.com/musescore/MuseScore/tree/main/fonts/leland) by MuseScore

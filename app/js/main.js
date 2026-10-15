@@ -10,9 +10,11 @@ import { Particles } from "./particles.js";
 import { FollowCamera } from "./camera.js";
 import { PreviewSynth } from "./audio.js";
 import { exportVideo } from "./exporter.js";
-import { loadMusicFont } from "./glyphs.js";
-import { params, RESOLUTIONS } from "./params.js";
-import { buildGui } from "./gui.js";
+import { setMusicFont } from "./glyphs.js";
+import { DEFAULTS, params, RESOLUTIONS } from "./params.js";
+import { CHOICES, buildGui } from "./gui.js";
+import { builtinPack, customPack, deleteCustom, importCharacter, listBuiltin, listCustom } from "./characters.js";
+import { applyLook, downloadLook, readLookFile, recalledLook, rememberLook, resetLook } from "./looks.js";
 
 const canvas = document.getElementById("view");
 const frameEl = document.getElementById("frame");
@@ -279,9 +281,90 @@ function setBackground() {
   frameEl.className = `bg-${params.background}`;
 }
 
+// ---- Characters -----------------------------------------------------------
+async function loadCharacterById(id) {
+  const pack = id.startsWith("custom-") ? await customPack(id) : await builtinPack(id);
+  try {
+    return await loadCharacter(pack);
+  } finally {
+    pack.revoke(); // textures hold the decoded images now
+  }
+}
+
+// Switches character; if it can't be loaded, falls back to the default one.
+async function switchCharacter(id) {
+  let next;
+  try {
+    next = await loadCharacterById(id);
+  } catch (err) {
+    notify(`Couldn't load that character (${err.message}); using the default character instead.`, true);
+    id = DEFAULTS.character;
+    next = await loadCharacterById(id);
+  }
+  character?.dispose();
+  character = next;
+  character.id = id;
+  params.character = id;
+  if (panel) {
+    panel.setCharacterOptions(await listBuiltin(), await listCustom());
+    panel.refreshAll();
+  }
+}
+
+const characterInput = document.createElement("input");
+characterInput.type = "file";
+characterInput.multiple = true;
+characterInput.accept = ".png,.json";
+characterInput.addEventListener("change", async () => {
+  const files = [...characterInput.files];
+  characterInput.value = "";
+  if (!files.length) return;
+  try {
+    const { id, name } = await importCharacter(files);
+    await switchCharacter(id);
+    rebuild();
+    rememberLook(params);
+    notify(`Added “${name}”. It's kept in this browser, on this computer.`);
+  } catch (err) {
+    notify(`Couldn't add that character: ${err.message}`, true);
+  }
+});
+
+// ---- Looks ----------------------------------------------------------------
+const lookInput = document.createElement("input");
+lookInput.type = "file";
+lookInput.accept = ".json";
+lookInput.addEventListener("change", async () => {
+  const file = lookInput.files[0];
+  lookInput.value = "";
+  if (!file) return;
+  try {
+    const ignored = applyLook(params, DEFAULTS, await readLookFile(file), CHOICES);
+    await afterLookChange();
+    notify(`Loaded the look from ${file.name}.${ignored.length ? ` Skipped unknown settings: ${ignored.join(", ")}.` : ""}`);
+  } catch (err) {
+    notify(`Couldn't load that look: ${err.message}`, true);
+  }
+});
+
+// After many settings changed at once: font, character, panel, scene.
+async function afterLookChange() {
+  await setMusicFont(params.musicFont);
+  if (params.character !== character?.id) await switchCharacter(params.character);
+  panel.refreshAll();
+  setBackground();
+  rebuild();
+  rememberLook(params);
+}
+
 async function main() {
-  await loadMusicFont();
-  character = await loadCharacter("../characters/clawd");
+  // Start from the look used last time on this browser, if any.
+  const recalled = recalledLook();
+  if (recalled) {
+    try { applyLook(params, DEFAULTS, recalled, CHOICES); } catch { /* ignore a broken saved look */ }
+  }
+  await setMusicFont(params.musicFont);
+  await switchCharacter(params.character);
   params.bpm = Math.round(rawBpm());
   panel = buildGui(params, {
     rebuild,
@@ -291,7 +374,24 @@ async function main() {
     reloadFile: () => { if (lastFile) loadScoreFile(lastFile); },
     exportVideo: () => runExport(),
     restyleStaff: c => world.staff.lineMaterial.color.set(c),
+    setCharacter: async id => { await switchCharacter(id); rebuild(); rememberLook(params); },
+    importCharacter: () => characterInput.click(),
+    removeCharacter: async () => {
+      if (!params.character.startsWith("custom-")) return;
+      if (!confirm("Remove this custom character from this browser?")) return;
+      await deleteCustom(params.character);
+      await switchCharacter(DEFAULTS.character);
+      rebuild();
+      rememberLook(params);
+    },
+    setMusicFont: async name => { await setMusicFont(name); rebuild(); },
+    saveLook: () => downloadLook(params, `look-${new Date().toISOString().slice(0, 10)}`),
+    loadLook: () => lookInput.click(),
+    resetLook: async () => { resetLook(params, DEFAULTS); await afterLookChange(); notify("Look reset to defaults."); },
+    remember: () => rememberLook(params),
   });
+  panel.setCharacterOptions(await listBuiltin(), await listCustom());
+  panel.refreshAll();
   panel.setScoreName(raw.title);
   setBackground();
   rebuild();

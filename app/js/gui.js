@@ -1,12 +1,24 @@
 import GUI from "lil-gui";
 import { RIBBON_PRESETS, SHAPE_TWEAK_DEFAULTS } from "./presets.js";
 import { RESOLUTIONS } from "./params.js";
+import { MUSIC_FONTS } from "./glyphs.js";
+
+// Allowed values for settings picked from a list (also used to check loaded looks).
+export const CHOICES = {
+  preset: Object.keys(RIBBON_PRESETS),
+  musicFont: Object.keys(MUSIC_FONTS),
+  ghosts: ["off", "same staff", "all staves"],
+  sparkStyle: ["light", "paint"],
+};
 
 // The settings panel. `actions` supplies the callbacks:
-//   rebuild(), setBackground(), loadFile(), useDemo(), exportVideo(), restyleStaff(color)
+//   rebuild(), setBackground(), loadFile(), useDemo(), reloadFile(), exportVideo(),
+//   restyleStaff(color), setCharacter(id), importCharacter(), removeCharacter(),
+//   setMusicFont(name), saveLook(), loadLook(), resetLook(), remember()
 export function buildGui(params, actions) {
   const gui = new GUI({ title: "SheetGlider" });
   const re = () => actions.rebuild();
+  gui.onFinishChange(() => actions.remember());
 
   const music = gui.addFolder("Music");
   const scoreInfo = { name: "demo melody" };
@@ -16,9 +28,24 @@ export function buildGui(params, actions) {
   music.add(params, "repeats").name("play repeats").onChange(actions.reloadFile);
   const bpm = music.add(params, "bpm", 20, 300, 1).name("tempo (bpm)").onFinishChange(re);
   music.add(params, "follow", { "top staff": 0, "bottom staff": 1, "highest note": "top" })
-    .name("Clawd follows").onChange(re);
+    .name("character follows").onChange(re);
+
+  const who = gui.addFolder("Character");
+  let characterPicker = who.add(params, "character", {}).name("character");
+  const removeBtn = who.add({ remove: actions.removeCharacter }, "remove").name("Remove this custom character");
+  who.add({ add: actions.importCharacter }, "add").name("🖼 Load custom character…");
+  const setCharacterOptions = (builtin, custom) => {
+    const options = {};
+    for (const c of builtin) options[c.name] = c.id;
+    for (const c of custom) options[`${c.name} (custom)`] = c.id;
+    // options() replaces the dropdown (appending it last), so move it back to the top.
+    characterPicker = characterPicker.options(options).name("character").onChange(id => actions.setCharacter(id));
+    characterPicker.domElement.parentElement.prepend(characterPicker.domElement);
+    removeBtn.show(params.character.startsWith("custom-"));
+  };
 
   const look = gui.addFolder("Look");
+  look.add(params, "musicFont", CHOICES.musicFont).name("music font").onChange(name => actions.setMusicFont(name));
   look.addColor(params, "staffColor").name("staff color").onChange(c => actions.restyleStaff(c));
   look.addColor(params, "noteColor").name("note color").onFinishChange(re);
   look.addColor(params, "playedColor").name("played note color");
@@ -100,6 +127,12 @@ export function buildGui(params, actions) {
   timing.add(params, "postroll", 0, 10, 0.1).name("tail (s)").onFinishChange(re);
   timing.close();
 
+  const looks = gui.addFolder("Looks");
+  looks.add({ save: actions.saveLook }, "save").name("💾 Save look…");
+  looks.add({ load: actions.loadLook }, "load").name("📂 Load look…");
+  looks.add({ reset: actions.resetLook }, "reset").name("Reset look to defaults");
+  looks.close();
+
   const preview = gui.addFolder("Preview");
   preview.add(params, "background", ["checker", "dark", "light", "green", "blue"]).onChange(actions.setBackground);
   preview.add(params, "sound").name("preview sound");
@@ -115,5 +148,18 @@ export function buildGui(params, actions) {
   return {
     setScoreName(name) { scoreInfo.name = name; music.controllers[0].updateDisplay(); },
     refreshBpm() { bpm.updateDisplay(); },
+    setCharacterOptions,
+    // After settings change in code (loading a look): keep numbers inside each
+    // slider's range, then show the new values.
+    refreshAll() {
+      for (const c of gui.controllersRecursive()) {
+        if (typeof c.getValue() === "number" && c._min !== undefined && c._max !== undefined) {
+          const v = Math.min(c._max, Math.max(c._min, c.getValue()));
+          if (v !== c.getValue()) c.object[c.property] = v;
+        }
+        c.updateDisplay();
+      }
+      removeBtn.show(params.character.startsWith("custom-"));
+    },
   };
 }

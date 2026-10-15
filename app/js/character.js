@@ -2,8 +2,9 @@ import * as THREE from "three";
 import { placeQuad, quadAxes } from "./facing.js";
 import { makeFrame } from "./ribbon.js";
 import { monotoneCubic } from "./util.js";
+import { STATES } from "./characters.js";
 
-// A character pack is a folder with character.json and up to 6 sprites:
+// A character has up to 6 sprites (see characters.js for where they come from):
 //   glide  in the air between notes, and standing on short notes
 //   crouch just before a jump, and absorbing a landing
 //   hit    landing on a long note (a little celebration)
@@ -13,29 +14,27 @@ import { monotoneCubic } from "./util.js";
 // Missing sprites fall back (surf -> ride -> glide, others -> glide), so even a
 // single image works; most of the life comes from the procedural motion below.
 
-const STATES = ["glide", "crouch", "hit", "ride", "rest", "surf"];
 const FALLBACK = { surf: "ride", crouch: "glide", hit: "glide", ride: "glide", rest: "glide" };
-const ALIASES = { crouch: "anticipate" }; // older packs
 
-export async function loadCharacter(baseUrl) {
-  const def = await (await fetch(`${baseUrl}/character.json`)).json();
+// pack: { def, urls: { state: url } } from characters.js. Returns { def, textures, dispose }.
+export async function loadCharacter(pack) {
   const loader = new THREE.TextureLoader();
   const textures = {};
   for (const state of STATES) {
-    const file = def.sprites?.[state] ?? def.sprites?.[ALIASES[state]];
-    if (!file) continue;
-    const tex = await loader.loadAsync(`${baseUrl}/${file}`);
+    if (!pack.urls[state]) continue;
+    const tex = await loader.loadAsync(pack.urls[state]);
     tex.colorSpace = THREE.SRGBColorSpace;
-    if (def.pixelArt) {
+    if (pack.def.pixelArt) {
       tex.magFilter = THREE.NearestFilter;
       tex.minFilter = THREE.LinearMipmapLinearFilter;
     }
     textures[state] = tex;
   }
+  const unique = new Set(Object.values(textures));
   textures.glide ??= Object.values(textures)[0];
   const resolve = s => textures[s] ?? resolve(FALLBACK[s] ?? "glide");
   for (const state of STATES) textures[state] = resolve(state);
-  return { def, textures };
+  return { def: pack.def, textures, dispose: () => unique.forEach(t => t.dispose()) };
 }
 
 const smooth01 = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);

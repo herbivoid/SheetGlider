@@ -2,6 +2,9 @@ import { SHAPE_TWEAK_DEFAULTS } from "./presets.js";
 
 // Every user setting, with its default.
 export const params = {
+  // Character & font
+  character: "clawd",   // a folder in characters/, or a custom character's id
+  musicFont: "Bravura",
   // Look
   staffColor: "#f4efe6",
   noteColor: "#f4efe6",
@@ -70,6 +73,8 @@ export const params = {
   exportAudio: true,
   glowLayer: false,   // export the glow as its own file (for an "Add" blend in the editor)
 };
+
+export const DEFAULTS = Object.freeze({ ...params });
 
 export const RESOLUTIONS = {
   "1280x720": [1280, 720], "1920x1080": [1920, 1080], "2560x1440": [2560, 1440],

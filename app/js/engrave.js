@@ -1,4 +1,5 @@
 import { flagCount } from "./score.js";
+import { METRICS } from "./glyphs.js";
 
 // Notation layout in the staff's own flat coordinates: s = distance along the
 // staff, v = height (both in staff spaces; v = 0 is staff 0's middle line).
@@ -8,14 +9,15 @@ import { flagCount } from "./score.js";
 //   bands:  [{ s, va, vb }]                  filled shapes between two edges (beams, ties, slurs)
 //   visuals: { key, note, s, v, beat, offset, glow, scale }  notes that light up when played
 
-export const HEAD_HALF = 0.59;
-export const WHOLE_HALF = 0.85;
+// Notehead sizes depend on the music font; syncFontMetrics() refreshes them.
+let HEAD_HALF = 0.59;
+let WHOLE_HALF = 0.85;
+let SECOND_SHIFT = 1.06;   // how far a notehead moves to the other side of the stem
 export const STEM_W = 0.12;
 const STEM_ATTACH = 0.168;
 const STEM_LEN = 3.5;
 const BEAM = 0.5;          // beam thickness
 const BEAM_STEP = 0.75;    // distance between beam levels
-const SECOND_SHIFT = 2 * HEAD_HALF - STEM_W;
 const ACC_COL = 1.15;      // accidental column width
 const GRACE = 0.65;        // grace note scale
 const GRACE_STEP = 1.3;    // room per grace note
@@ -23,6 +25,12 @@ const ACC_NAMES = { 1: "sharp", "-1": "flat", 0: "natural", 2: "doubleSharp", "-
 
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const beatKey = b => Math.round(b * 960);
+
+function syncFontMetrics() {
+  HEAD_HALF = METRICS.noteHead / 2;
+  WHOLE_HALF = METRICS.wholeHead / 2;
+  SECOND_SHIFT = METRICS.noteHead - STEM_W;
+}
 
 // Stem direction (+1 up, -1 down) for a set of elements: the file's choice if
 // it has one, else away from the note farthest from the middle line.
@@ -108,6 +116,7 @@ function cancelled(from, to) {
 }
 
 export function engrave(score, { sOf, staffCenter, lineThickness }) {
+  syncFontMetrics();
   const out = { glyphs: [], tubes: [], bands: [], visuals: [], info: new Map() };
   const ledgerR = lineThickness * 0.6;
 
