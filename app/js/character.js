@@ -54,18 +54,32 @@ export class CharacterView {
       for (let k = run.a; k < run.b; k++) this.targets[k].run = run;
     }
 
-    this.material = new THREE.MeshBasicMaterial({
-      map: character.textures.glide, transparent: true, side: THREE.DoubleSide, depthWrite: false,
-    });
-    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), this.material);
-    this.mesh.matrixAutoUpdate = false;
-    this.mesh.renderOrder = 3;
+    this.chords = chordEvents(score, this.targets, params);
+
+    // The character, plus a few semi-transparent clones for chords.
+    this.group = new THREE.Group();
+    this.geometry = new THREE.PlaneGeometry(1, 1);
+    const sprite = renderOrder => {
+      const material = new THREE.MeshBasicMaterial({
+        map: character.textures.glide, transparent: true, side: THREE.DoubleSide, depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(this.geometry, material);
+      mesh.matrixAutoUpdate = false;
+      mesh.renderOrder = renderOrder;
+      this.group.add(mesh);
+      return mesh;
+    };
+    this.ghosts = Array.from({ length: GHOST_POOL }, () => sprite(3));
+    this.mesh = sprite(5);
+    this.material = this.mesh.material;
     this.frame = makeFrame();
   }
 
-  // Landings that get a particle burst (not the notes surfed through mid-run).
+  // Landings that get a particle burst: not the notes surfed through mid-run,
+  // but including the chord notes the clones land on.
   landings() {
-    return this.targets.filter(n => !n.run);
+    const ghostLandings = this.chords.flatMap(c => c.ghosts.map(g => ({ on: c.on, p: g.p })));
+    return [...this.targets.filter(n => !n.run), ...ghostLandings];
   }
 
   // Vertical position (half-spaces from the middle line) and sprite state at time t.
@@ -162,11 +176,17 @@ export class CharacterView {
     let tilt = THREE.MathUtils.clamp(vel * 0.012 * P.lean, -0.4, 0.4);
     if (m.surfing) tilt = THREE.MathUtils.clamp(vel * 0.02 * P.lean, -0.5, 0.5) - P.surfLean;
 
-    this.material.map = this.character.textures[m.state];
-
     const s = this.sOf(this.score.beatAt(t));
+    this.place(this.mesh, s, m.p, m.state, P.characterSize * sx, P.characterSize * sy, tilt, camera);
+    this.updateGhosts(t, s, m.p, camera);
+  }
+
+  // Positions a character sprite standing at height p (half-spaces) at distance s along the staff.
+  place(mesh, s, p, state, width, height, tilt, camera) {
+    const P = this.params;
+    mesh.material.map = this.character.textures[state];
     this.ribbon.frameAt(s, this.frame);
-    const at = new THREE.Vector3().copy(this.frame.P).addScaledVector(this.frame.U, m.p / 2);
+    const at = new THREE.Vector3().copy(this.frame.P).addScaledVector(this.frame.U, p / 2);
     const X = new THREE.Vector3();
     const Y = new THREE.Vector3();
     quadAxes(camera, at, this.frame.T, this.frame.U, 1, P.flipSharpness, X, Y, tilt);
@@ -176,12 +196,55 @@ export class CharacterView {
     const toCam = new THREE.Vector3().subVectors(camera.position, at).normalize();
     at.addScaledVector(toCam, 0.4);
 
-    const tex = this.material.map.image;
+    const tex = mesh.material.map.image;
     const aspect = tex ? tex.width / tex.height : 1;
-    const h = P.characterSize * sy;
-    const w = P.characterSize * aspect * sx;
     const [ax, ay] = this.character.def.anchor ?? [0.5, 0];
-    placeQuad(this.mesh, at, X, Y, w, h, ax, ay, camera);
+    placeQuad(mesh, at, X, Y, width * aspect, height, ax, ay, camera);
+  }
+
+  // Chord clones: split off from the character on the way to a chord, each
+  // lands on one of the other chord notes, then they merge back into him.
+  updateGhosts(t, s, charP, camera) {
+    const P = this.params;
+    let used = 0;
+    if (P.ghosts !== "off") {
+      const size = P.characterSize * 0.75;
+      for (const c of this.chords) {
+        if (t < c.on - c.split || t > c.on + c.hold + GHOST_MERGE) continue;
+        c.ghosts.forEach((g, k) => {
+          if (used >= this.ghosts.length) return;
+          let p;
+          let fade;
+          let spread; // 0 = inside the character, 1 = fanned out beside its note
+          let state = "glide";
+          let squash = 1;
+          if (t < c.on) {
+            const u = (t - (c.on - c.split)) / c.split;
+            p = charP + (g.p - charP) * easeInOut(u);
+            fade = smooth01(0, 0.5, u);
+            spread = easeInOut(u);
+          } else if (t < c.on + c.hold) {
+            p = g.p;
+            fade = 1;
+            spread = 1;
+            state = g.long ? "hit" : "crouch";
+            squash = 1 - 0.25 * P.squash * Math.exp(-(t - c.on) / 0.07);
+          } else {
+            const u = (t - c.on - c.hold) / GHOST_MERGE;
+            p = g.p + (charP - g.p) * easeInOut(u);
+            fade = 1 - smooth01(0.3, 1, u);
+            spread = 1 - easeInOut(u);
+          }
+          // Chord notes are close together, so clones fan out alternately right and left.
+          const side = (k % 2 ? -1 : 1) * (0.55 + 0.45 * Math.floor(k / 2)) * size * 1.4;
+          const mesh = this.ghosts[used++];
+          this.place(mesh, s + side * spread, p, state, size * (2 - squash), size * squash, 0, camera);
+          mesh.material.opacity = P.ghostOpacity * fade;
+          mesh.visible = fade > 0.01;
+        });
+      }
+    }
+    for (let i = used; i < this.ghosts.length; i++) this.ghosts[i].visible = false;
   }
 
   // World position of the character's feet at time t (for the camera and particles).
@@ -191,9 +254,43 @@ export class CharacterView {
   }
 
   dispose() {
-    this.mesh.geometry.dispose();
-    this.material.dispose();
+    this.geometry.dispose();
+    this.mesh.material.dispose();
+    for (const g of this.ghosts) g.material.dispose();
   }
+}
+
+const GHOST_POOL = 8;
+const GHOST_MERGE = 0.25; // seconds to fly back into the character
+
+// For every note the character lands on, the other notes of its chord that a
+// clone should land on (same staff, or every staff), nearest first.
+function chordEvents(score, targets, params) {
+  if (params.ghosts === "off") return [];
+  const byStart = new Map();
+  for (const n of score.notes) {
+    if (n.tieFromPrev) continue;
+    if (!byStart.has(n.start)) byStart.set(n.start, []);
+    byStart.get(n.start).push(n);
+  }
+  const events = [];
+  targets.forEach((tg, i) => {
+    const mates = (byStart.get(tg.note.start) ?? [])
+      .filter(n => n !== tg.note && (params.ghosts === "all staves" || n.staff === tg.note.staff))
+      .map(n => ({ p: n.pos - n.staff * 20, long: score.timeOf(n.start + n.soundingDur) - tg.on >= params.cheerMin }))
+      .filter(g => g.p !== tg.p)
+      .sort((a, b) => Math.abs(a.p - tg.p) - Math.abs(b.p - tg.p))
+      .slice(0, params.maxGhosts);
+    if (!mates.length) return;
+    const prevGap = i > 0 ? tg.on - targets[i - 1].on : 0.4;
+    events.push({
+      on: tg.on,
+      split: THREE.MathUtils.clamp(prevGap * 0.6, 0.06, 0.3),
+      hold: THREE.MathUtils.clamp((tg.end - tg.on) * 0.5, 0.1, 0.35),
+      ghosts: mates,
+    });
+  });
+  return events;
 }
 
 // The notes the character lands on: one per onset, from the followed staff
@@ -209,6 +306,7 @@ function pickTargets(score, follow) {
   return [...byOnset.values()]
     .sort((a, b) => a.start - b.start)
     .map(n => ({
+      note: n,
       on: score.timeOf(n.start),
       end: score.timeOf(n.start + n.soundingDur),
       p: n.pos - n.staff * 20, // staff 1 sits 10 spaces (20 half-spaces) below staff 0

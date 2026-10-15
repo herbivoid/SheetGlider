@@ -41,6 +41,9 @@ export const params = {
   fastNote: 0.22,     // seconds: notes closer together than this count as fast
   minRunNotes: 3,     // this many fast notes in a row make a run (surfed, not hopped)
   surfLean: 0.12,
+  ghosts: "same staff", // chord clones: "off", "same staff", "all staves"
+  ghostOpacity: 0.7,
+  maxGhosts: 4,
   // Camera
   camDistance: 50,
   fov: 30,
@@ -62,6 +65,7 @@ export const params = {
   fps: 60,
   format: "prores",
   exportAudio: true,
+  glowLayer: false,   // export the glow as its own file (for an "Add" blend in the editor)
 };
 
 export const RESOLUTIONS = {

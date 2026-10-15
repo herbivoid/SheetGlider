@@ -3,7 +3,7 @@ import { demoRaw, finalizeScore } from "./score.js";
 import { buildSpacing } from "./spacing.js";
 import { Ribbon } from "./ribbon.js";
 import { buildShape } from "./presets.js";
-import { StaffView, headerLayout } from "./staff.js";
+import { GLOW_LAYER, StaffView, headerLayout } from "./staff.js";
 import { measureExtras } from "./engrave.js";
 import { CharacterView, loadCharacter } from "./character.js";
 import { Particles } from "./particles.js";
@@ -37,7 +37,7 @@ const rawBpm = () => raw.tempo?.[0]?.bpm ?? 120;
 
 function rebuild() {
   if (world) {
-    scene.remove(world.staff.group, world.hero.mesh, world.particles.points);
+    scene.remove(world.staff.group, world.hero.group, world.particles.points);
     world.staff.dispose();
     world.hero.dispose();
     world.particles.dispose();
@@ -55,7 +55,7 @@ function rebuild() {
   const follow = params.follow === "top" || params.follow < score.staves.length ? params.follow : 0;
   const hero = new CharacterView({ character, score, ribbon, params, sOf, follow });
   const particles = new Particles({ hero, ribbon, score, params, sOf });
-  scene.add(staff.group, hero.mesh, particles.points);
+  scene.add(staff.group, hero.group, particles.points);
   const t0 = -params.preroll;
   const t1 = score.timeOf(score.endBeat) + params.postroll;
   const [w, h] = exportSize();
@@ -66,12 +66,25 @@ function rebuild() {
   layout();
 }
 
-function renderAt(time) {
+// mode: "all" (preview, or export with glow baked in), "main" (everything but
+// the glow), "glow" (only the glow, as additive light on opaque black).
+function renderAt(time, mode = "all") {
   rig.apply(camera, time);
   world.hero.update(time, camera);
   world.staff.update(time, camera);
   world.particles.update(time);
+  camera.layers.set(0);
+  if (mode === "all") camera.layers.enable(GLOW_LAYER);
+  if (mode === "glow") {
+    camera.layers.set(GLOW_LAYER);
+    renderer.setClearColor(0x000000, 1);
+    world.staff.setGlowAdditive(true);
+  }
   renderer.render(scene, camera);
+  if (mode === "glow") {
+    renderer.setClearColor(0x000000, 0);
+    world.staff.setGlowAdditive(false);
+  }
 }
 
 // Fit the preview canvas into the stage at the export aspect ratio.
@@ -219,10 +232,13 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   const started = performance.now();
-  let result = null;
+  const layers = params.glowLayer
+    ? [{ suffix: "", render: tt => renderAt(tt, "main") }, { suffix: "_glow", render: tt => renderAt(tt, "glow"), opaque: true }]
+    : [{ suffix: "", render: tt => renderAt(tt, "all") }];
+  let results = null;
   try {
-    result = await exportVideo({
-      renderer, width: w, height: h, renderAt, t0: from, t1: to, fps: params.fps, format: params.format,
+    results = await exportVideo({
+      renderer, width: w, height: h, layers, t0: from, t1: to, fps: params.fps, format: params.format,
       name: world.score.title, cancelled: () => cancelRequested,
       onProgress: (done, total) => {
         progressEl.value = done / total;
@@ -231,15 +247,17 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
         detailEl.textContent = `Frame ${done} / ${total}  ·  ~${Math.ceil(eta)} s left`;
       },
     });
-    let lines = result.ok ? [`Saved to:\n${result.path}`] : [result.log];
-    if (result.ok && params.exportAudio) {
+    const ok = results.every(r => r.ok);
+    const lines = results.map((r, i) => (r.ok ? `${i ? "Glow layer" : "Saved to"}:\n${r.path}` : r.log));
+    if (ok && params.exportAudio) {
       detailEl.textContent = "Rendering audio…";
       const wav = await synth.renderWav(world.score, from, to);
-      const res = await fetch(`/api/export/audio?video=${encodeURIComponent(result.path)}`, { method: "POST", body: wav });
+      const res = await fetch(`/api/export/audio?video=${encodeURIComponent(results[0].path)}`, { method: "POST", body: wav });
       const saved = await res.json();
       lines.push(saved.error ? `Audio failed: ${saved.error}` : `Audio:\n${saved.path}`);
     }
-    titleEl.textContent = result.ok ? "Export finished" : "Export failed";
+    const secs = (performance.now() - started) / 1000;
+    titleEl.textContent = ok ? `Export finished in ${secs.toFixed(0)} s` : "Export failed";
     detailEl.textContent = lines.join("\n\n");
   } catch (err) {
     titleEl.textContent = err.message === "cancelled" ? "Export cancelled" : "Export failed";
@@ -250,7 +268,7 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
     closeBtn.hidden = false;
     layout();
   }
-  return result;
+  return results;
 }
 
 // ---- Startup --------------------------------------------------------------

@@ -12,6 +12,7 @@ import { layoutSpanners } from "./spanners.js";
 //   bands   -> thin slabs following the ribbon (beams, ties, slurs)
 
 export const STAFF_GAP = 10; // distance between staff centers (grand staff), in staff spaces
+export const GLOW_LAYER = 1;  // glows render on their own layer, so they can be exported separately
 const QUAD = new THREE.PlaneGeometry(1, 1);
 const SLAB_DEPTH = 0.06;
 
@@ -144,9 +145,17 @@ export class StaffView {
       }));
       this.ribbon.pointAt(vis.s, vis.v, visual.glow.position);
       visual.glow.renderOrder = 2;
+      visual.glow.layers.set(GLOW_LAYER);
       this.group.add(visual.glow);
     }
     this.visuals.set(vis.key, visual);
+  }
+
+  // Normal blending inside the main picture; additive (light on black) for the separate glow layer.
+  setGlowAdditive(additive) {
+    for (const vis of this.visuals.values()) {
+      if (vis.glow) vis.glow.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+    }
   }
 
   // Adds a glyph quad at (s, v). `tint` makes it follow a note's color (flash when played).

@@ -48,6 +48,8 @@ Examples in `examples/`:
 
 With **also save score audio** on, a `.wav` of the preview synth is saved next to the video. It's lined up with the video, lead-in included.
 
+**Glow as separate layer:** exports two files, the video without glow, and `…_glow` with only the hit glow, as light on black. In your editor, put the glow file on the track above the main video and set its composite/blend mode to **Add** (or **Screen**). That makes it brighten the footage like real light, instead of sitting on top as a semi-transparent smudge. In DaVinci Resolve, the setting is **Composite Mode** in the Inspector. Left on *Normal*, the glow layer would cover everything with black.
+
 **DaVinci Resolve:** if the background shows black instead of transparent, right-click the clip in the Media Pool, choose **Clip Attributes…**, and set **Alpha Mode** to *Straight*.
 
 ## Ribbon shapes
@@ -81,6 +83,8 @@ In `character.json`, `anchor` is the point that touches the note, as fractions f
 - how many fast notes in a row make a **run** that gets surfed instead of hopped
 
 All of these are based on real time, so the tempo matters as well as the note type.
+
+**Chord clones:** when the character lands on a chord, see-through clones split off, land on the other notes of the chord, fan out so they don't pile up, then merge back into him. They can come from the same staff or from every staff, or be turned off. You can also set how many clones a chord gets and how see-through they are.
 
 ## Credits
 

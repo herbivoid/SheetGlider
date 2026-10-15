@@ -76,6 +76,9 @@ export function buildGui(params, actions) {
   motion.add(params, "fastNote", 0.05, 0.6, 0.01).name("fast note < (s)").onFinishChange(re);
   motion.add(params, "minRunNotes", 2, 12, 1).name("notes to make a run").onFinishChange(re);
   motion.add(params, "surfLean", -0.5, 0.8, 0.01).name("surf lean");
+  motion.add(params, "ghosts", ["off", "same staff", "all staves"]).name("chord clones").onChange(re);
+  motion.add(params, "maxGhosts", 1, 8, 1).name("max clones per chord").onFinishChange(re);
+  motion.add(params, "ghostOpacity", 0.1, 1, 0.05).name("clone opacity");
   motion.close();
 
   const cam = gui.addFolder("Camera");
@@ -103,6 +106,7 @@ export function buildGui(params, actions) {
   exp.add(params, "fps", [24, 25, 30, 50, 60]);
   exp.add(params, "format", { "ProRes 4444 (.mov)": "prores", "WebM VP9 alpha": "webm", "PNG sequence": "png" });
   exp.add(params, "exportAudio").name("also save score audio (.wav)");
+  exp.add(params, "glowLayer").name("glow as separate layer");
   exp.add({ go: actions.exportVideo }, "go").name("⬇ Export video");
 
   return {

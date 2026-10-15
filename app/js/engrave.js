@@ -238,20 +238,17 @@ function layoutBeams(out, items) {
   const half = STEM_W / 2;
   band(first.stemX - half, last.stemX + half, 1);
 
+  // Secondary beams join neighbours that are both short enough, so four 16ths
+  // share one double beam. (Some files break them into pairs; standard
+  // engraving doesn't.) The file still decides which way a lone hook points.
   for (let L = 2; L <= levels; L++) {
     const has = i => i.flags >= L;
     const type = i => i.e.beams?.[L - 1];
-    const joined = k => {
-      const a = items[k];
-      const b = items[k + 1];
-      if (a.e.beams && b.e.beams) return ["start", "continue"].includes(type(a)) && ["continue", "stop"].includes(type(b));
-      return has(a) && has(b);
-    };
     let k = 0;
     while (k < items.length) {
       if (!has(items[k])) { k++; continue; }
       let j = k;
-      while (j < items.length - 1 && joined(j)) j++;
+      while (j < items.length - 1 && has(items[j + 1])) j++;
       if (j > k) {
         band(items[k].stemX - half, items[j].stemX + half, L);
       } else {

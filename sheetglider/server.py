@@ -52,6 +52,7 @@ class ExportJob:
         if not ffmpeg:
             raise RuntimeError("ffmpeg not found on PATH")
         self.frame_bytes = width * height * 4
+        self.height = height
         self.next_index = 0
         self.lock = threading.Lock()
         OUTPUT.mkdir(exist_ok=True)
@@ -78,34 +79,52 @@ class ExportJob:
         # Frames are handed to ffmpeg on a separate thread so the browser can keep
         # rendering while ffmpeg encodes. The small queue limit keeps memory bounded.
         self.error = None
+        self.pending = {}
         self.queue = queue.Queue(maxsize=8)
         self.writer = threading.Thread(target=self._write_loop, daemon=True)
         self.writer.start()
 
     def _write_loop(self):
-        while (item := self.queue.get()) is not None:
+        while (data := self.queue.get()) is not None:
             if self.error:
                 continue  # keep draining so nobody blocks on a full queue
-            compressed, index, data = item
             try:
-                if compressed:
-                    data = zlib.decompress(data)
-                if len(data) != self.frame_bytes:
-                    raise ValueError(f"frame {index}: expected {self.frame_bytes} bytes, got {len(data)}")
                 self.proc.stdin.write(data)
             except Exception as exc:
                 self.error = str(exc)
 
-    def add_frame(self, index, data, compressed):
+    def add_frame(self, index, data, compressed, rows=None, opaque=False):
+        # Decompress here, in the request's own thread: uploads arrive in
+        # parallel, so this runs in parallel too (zlib releases the GIL).
+        if compressed:
+            data = zlib.decompress(data)
+        if rows is not None:
+            # Only rows y0..y1 were sent; the rest is background (transparent, or opaque black).
+            y0, y1 = rows
+            stride = self.frame_bytes // self.height
+            frame = bytearray(b"\x00\x00\x00\xff" * (self.frame_bytes // 4) if opaque else self.frame_bytes)
+            if len(data) != (y1 - y0) * stride:
+                raise ValueError(f"frame {index}: rows {y0}-{y1} don't match {len(data)} bytes")
+            frame[y0 * stride:y1 * stride] = data
+            data = bytes(frame)
+        if len(data) != self.frame_bytes:
+            raise ValueError(f"frame {index}: expected {self.frame_bytes} bytes, got {len(data)}")
+        # Frames can arrive slightly out of order: hold them until the ones before have arrived.
         with self.lock:
             if self.error:
                 raise RuntimeError(self.error)
-            if index != self.next_index:
-                raise ValueError(f"expected frame {self.next_index}, got {index}")
-            self.next_index += 1
-            self.queue.put((compressed, index, data))  # blocks if ffmpeg falls behind
+            if index < self.next_index or index in self.pending:
+                raise ValueError(f"frame {index} sent twice")
+            self.pending[index] = data
+            if len(self.pending) > 64:
+                raise ValueError("too many frames arrived out of order")
+            while self.next_index in self.pending:
+                self.queue.put(self.pending.pop(self.next_index))  # blocks if ffmpeg falls behind
+                self.next_index += 1
 
     def finish(self):
+        if self.pending and not self.error:
+            self.error = f"missing frames before {min(self.pending)}"
         self.queue.put(None)
         self.writer.join()
         self.proc.stdin.close()
@@ -220,7 +239,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(save_audio(query.get("video", [""])[0], body))
             elif url.path == "/api/export/frame":
                 job = JOBS[query["id"][0]]
-                job.add_frame(int(query["i"][0]), body, query.get("z") == ["1"])
+                rows = (int(query["y0"][0]), int(query["y1"][0])) if "y0" in query else None
+                job.add_frame(int(query["i"][0]), body, query.get("z") == ["1"], rows, query.get("bg") == ["1"])
                 self.send_json({"ok": True})
             elif url.path == "/api/export/finish":
                 self.send_json(JOBS.pop(query["id"][0]).finish())
