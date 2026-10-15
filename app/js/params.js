@@ -16,6 +16,9 @@ export const params = {
   burstCount: 6,
   trailRate: 70,
   particleSize: 0.35,
+  sparkStyle: "light",  // "light" (glow layer, additive) or "paint" (solid, in the main video)
+  sparkWhiteness: 0.15, // how far sparks may be mixed toward white (0 = all glow color)
+  sparkBrightness: 1,   // light style only
   // Spacing
   quarterWidth: 4.5,
   spacingExponent: 0.65,

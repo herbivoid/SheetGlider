@@ -31,6 +31,9 @@ export function buildGui(params, actions) {
   look.add(params, "burstCount", 0, 30, 1).name("landing sparks");
   look.add(params, "trailRate", 0, 300, 5).name("surf trail sparks/s");
   look.add(params, "particleSize", 0.1, 1.5, 0.05).name("spark size");
+  look.add(params, "sparkStyle", { "light (glow layer)": "light", "paint (solid)": "paint" }).name("spark style");
+  look.add(params, "sparkWhiteness", 0, 1, 0.01).name("spark whiteness");
+  look.add(params, "sparkBrightness", 0.1, 1, 0.01).name("spark brightness");
   look.close();
 
   const ribbon = gui.addFolder("Ribbon");

@@ -10,8 +10,12 @@ import { rand } from "./util.js";
 // and velocity come from a seeded random generator, so its position at any
 // time t is a formula. Scrubbing, preview and export all show the same sparks.
 //
-// Sparks are light, like the hit glow, so they live on the glow layer: when
-// the glow is exported separately they go with it, as additive light.
+// Two styles:
+//   light: on the glow layer, so in a separate-glow export they go with the
+//          glow as additive light. Glows nicely, but over very bright footage
+//          added light can only turn white.
+//   paint: solid pixels in the main video that blink out instead of fading,
+//          so they stay their own color over any footage.
 
 const MAX = 4000;
 
@@ -30,7 +34,6 @@ export class Particles {
     this.points = new THREE.Points(geo, this.material);
     this.points.frustumCulled = false;
     this.points.renderOrder = 4;
-    this.points.layers.set(GLOW_LAYER);
     this.frame = makeFrame();
     this.landings = hero.landings();
     this.runs = hero.runs;
@@ -43,6 +46,8 @@ export class Particles {
 
   update(t) {
     const P = this.params;
+    const paint = P.sparkStyle === "paint";
+    this.points.layers.set(paint ? 0 : GLOW_LAYER);
     this.material.size = P.particleSize;
     const glow = new THREE.Color(P.glowColor);
     const white = new THREE.Color(1, 1, 1);
@@ -70,8 +75,9 @@ export class Particles {
       this.positions[k] = origin.x + v.x * age + frame.U.x * fall;
       this.positions[k + 1] = origin.y + v.y * age + frame.U.y * fall;
       this.positions[k + 2] = origin.z + v.z * age + frame.U.z * fall;
-      tmpColor.copy(glow).lerp(white, rand(seed + 4) * 0.6);
-      const fade = Math.pow(1 - age / life, 1.4);
+      tmpColor.copy(glow).lerp(white, rand(seed + 4) * P.sparkWhiteness);
+      // Light: brightness goes in alpha (the amount of light added). Paint: always solid.
+      const fade = paint ? 1 : Math.pow(1 - age / life, 1.4) * P.sparkBrightness;
       const c = count * 4;
       this.colors[c] = tmpColor.r;
       this.colors[c + 1] = tmpColor.g;
