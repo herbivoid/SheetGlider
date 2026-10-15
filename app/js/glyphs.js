@@ -1,20 +1,47 @@
 import * as THREE from "three";
 
-// Music glyphs drawn on canvases (white on transparent; tinted by material color).
-// Sizes are in staff spaces. Each glyph: { texture, w, h, ax, ay } where (ax, ay)
-// is the anchor as a 0..1 fraction from the bottom-left of the quad.
+// Music glyphs rendered from a SMuFL music font (Bravura by default) onto
+// canvases: white on transparent, tinted by material color. SMuFL fonts share
+// one layout: 1 em = 4 staff spaces, and each glyph's origin sits at a defined
+// point (noteheads: left edge, vertically centered on their staff position).
 //
-// Phase 0 draws shapes procedurally and uses the system's music symbols for
-// clefs/rests. Phase 1 swaps in SMuFL fonts (Bravura / Leland / Petaluma).
+// Sizes are in staff spaces. Each glyph: { texture, w, h, ax, ay } where
+// (ax, ay) is the anchor as a 0..1 fraction from the bottom-left of the quad.
 
 const PX = 96; // canvas pixels per staff space
-const SYMBOL_FONTS = '"Segoe UI Symbol", "Noto Music", "Bravura", "Apple Symbols", serif';
+const FONT = "Bravura";
 const cache = new Map();
+
+export async function loadMusicFont() {
+  const face = new FontFace(FONT, "url(fonts/Bravura.woff2)");
+  await face.load();
+  document.fonts.add(face);
+}
 
 export function glyph(kind) {
   if (!cache.has(kind)) cache.set(kind, build(kind));
   return cache.get(kind);
 }
+
+// SMuFL code points
+const G = {
+  noteheadWhole: "", noteheadHalf: "", noteheadBlack: "",
+  flag8thUp: "", flag8thDown: "", flag16thUp: "", flag16thDown: "",
+  flag32ndUp: "", flag32ndDown: "",
+  flat: "", natural: "", sharp: "", doubleSharp: "", doubleFlat: "",
+  gClef: "", fClef: "", cClef: "",
+  restWhole: "", restHalf: "", restQuarter: "", rest8th: "",
+  rest16th: "", rest32nd: "",
+  dot: "", brace: "",
+};
+const timeSigDigit = d => String.fromCharCode(0xE080 + d);
+
+const HEAD_W = 1.18;      // black/half notehead width
+const WHOLE_W = 1.69;
+const STEM_W = 0.12;
+const STEM_ATTACH_Y = 0.168;
+const STEM_LEN = 3.5;
+const FLAGS = { eighth: 1, "16th": 2, "32nd": 3 };
 
 // Box: x from -left..right, y from -down..up, in staff spaces, origin = anchor.
 function canvasGlyph(left, right, down, up, draw) {
@@ -26,7 +53,6 @@ function canvasGlyph(left, right, down, up, draw) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(PX, 0, 0, -PX, left * PX, up * PX); // y up, origin at anchor
   ctx.fillStyle = "#fff";
-  ctx.strokeStyle = "#fff";
   draw(ctx);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -34,94 +60,97 @@ function canvasGlyph(left, right, down, up, draw) {
   return { texture, w, h, ax: left / w, ay: down / h };
 }
 
+// Draws a font glyph with its SMuFL origin at (x, y) staff spaces (y up).
+function music(ctx, char, x, y, scaleY = 1, scaleX = 1) {
+  ctx.save();
+  const m = ctx.getTransform();
+  ctx.setTransform(scaleX, 0, 0, scaleY, m.e + x * PX, m.f - y * PX); // pixels, y down
+  ctx.font = `${4 * PX}px ${FONT}`;
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText(char, 0, 0);
+  ctx.restore();
+}
+
+function textWidth(ctx, text) {
+  ctx.save();
+  ctx.font = `${4 * PX}px ${FONT}`;
+  const w = ctx.measureText(text).width / PX;
+  ctx.restore();
+  return w;
+}
+
 function build(kind) {
   const [group, a, b] = kind.split(":");
   switch (group) {
-    case "note": return noteGlyph(a, b);
-    case "acc": return canvasGlyph(0.7, 0.7, 2, 2, ctx => ACCIDENTALS[a](ctx));
-    case "dot": return canvasGlyph(0.3, 0.3, 0.3, 0.3, ctx => circle(ctx, 0, 0, 0.2));
-    case "clef": return clefGlyph(a);
-    case "digit": return canvasGlyph(0.9, 0.9, 1, 1, ctx => textGlyph(ctx, a, 'bold 1px Georgia, "Times New Roman", serif', 2.05, 0));
+    case "note": return noteGlyph(a, b, kind.endsWith(":noflag"));
+    // Accidentals are anchored at their right edge, on their staff position.
+    case "acc": return canvasGlyph(2.0, 0, 2.2, 2.6, ctx => {
+      const ch = G[a] ?? G.natural;
+      music(ctx, ch, -textWidth(ctx, ch), 0);
+    });
+    // Augmentation dot, anchored at its left edge.
+    case "dot": return canvasGlyph(0, 0.5, 0.4, 0.4, ctx => music(ctx, G.dot, 0, 0));
+    // Clefs are anchored at their left edge on the middle line.
+    case "clef": return canvasGlyph(0, 3, 4.6, 4.6, ctx => {
+      if (a === "bass") music(ctx, G.fClef, 0, 1);
+      else if (a === "alto") music(ctx, G.cClef, 0, 0);
+      else if (a === "tenor") music(ctx, G.cClef, 0, 1);
+      else music(ctx, G.gClef, 0, -1);
+    });
+    // A time signature number (one or more digits), centered.
+    case "time": return canvasGlyph(2.2, 2.2, 1.2, 1.2, ctx => {
+      const text = [...a].map(d => timeSigDigit(Number(d))).join("");
+      music(ctx, text, -textWidth(ctx, text) / 2, 0);
+    });
     case "rest": return restGlyph(a);
+    // Brace spanning `a` staff spaces, anchored at its right edge, vertically centered.
+    // It's designed one staff tall; stretched taller it also needs some extra width.
+    case "brace": {
+      const span = Number(a);
+      const sy = span / 4;
+      const sx = Math.max(1, sy * 0.7);
+      return canvasGlyph(2.0, 0, span / 2, span / 2, ctx => {
+        const w = textWidth(ctx, G.brace) * sx;
+        music(ctx, G.brace, -w - 0.2, -span / 2, sy, sx);
+      });
+    }
     case "glow": return glowGlyph();
     default: throw new Error(`unknown glyph ${kind}`);
   }
 }
 
-const HEAD_RX = 0.59;
-const HEAD_RY = 0.41;
-const HEAD_TILT = 0.35;
-const STEM_W = 0.12;
-const STEM_LEN = 3.4;
-const HEAD_EDGE = 0.572; // x extent of the tilted notehead
-const HEAD_EDGE_Y = 0.1;
-
-function noteGlyph(type, stem) {
+// Notehead (+ stem + flags), anchored at the notehead's center.
+function noteGlyph(type, stem, noFlag) {
   const up = stem === "up";
-  return canvasGlyph(1.0, 2.0, 3.9, 3.9, ctx => {
+  return canvasGlyph(1.0, 2.0, 4.6, 4.6, ctx => {
     if (type === "whole") {
-      ellipse(ctx, 0, 0, 0.78, 0.47, 0);
-      ellipse(ctx, 0, 0, 0.36, 0.26, -0.9, true);
-      ctx.fill("evenodd");
+      music(ctx, G.noteheadWhole, -WHOLE_W / 2, 0);
       return;
     }
-    ellipse(ctx, 0, 0, HEAD_RX, HEAD_RY, HEAD_TILT);
-    if (type === "half") ellipse(ctx, 0, 0, 0.47, 0.2, 0.62, true);
-    ctx.fill("evenodd");
-    const stemX = up ? HEAD_EDGE - STEM_W : -HEAD_EDGE;
-    const y0 = up ? HEAD_EDGE_Y : -HEAD_EDGE_Y;
-    const tip = up ? STEM_LEN : -STEM_LEN;
-    ctx.fillRect(stemX, Math.min(y0, tip), STEM_W, Math.abs(tip - y0));
-    const flags = { eighth: 1, "16th": 2 }[type] ?? 0;
-    for (let i = 0; i < flags; i++) {
-      flag(ctx, stemX + (up ? STEM_W : 0) - 0.01, tip + (up ? -0.75 : 0.75) * i, up ? -1 : 1);
+    music(ctx, type === "half" ? G.noteheadHalf : G.noteheadBlack, -HEAD_W / 2, 0);
+    const flags = noFlag ? 0 : FLAGS[type] ?? 0;
+    const len = STEM_LEN + Math.max(0, flags - 1) * 0.5;
+    if (up) {
+      const x = HEAD_W / 2 - STEM_W;
+      ctx.fillRect(x, STEM_ATTACH_Y, STEM_W, len - STEM_ATTACH_Y);
+      if (flags) music(ctx, G[`flag${flagName(type)}Up`], x, len);
+    } else {
+      const x = -HEAD_W / 2;
+      ctx.fillRect(x, -len, STEM_W, len - STEM_ATTACH_Y);
+      if (flags) music(ctx, G[`flag${flagName(type)}Down`], x, -len);
     }
   });
 }
 
-function flag(ctx, x, y, dir) {
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.bezierCurveTo(x + 0.1, y + dir * 0.8, x + 1.15, y + dir * 1.1, x + 0.8, y + dir * 2.5);
-  ctx.bezierCurveTo(x + 0.95, y + dir * 1.55, x + 0.3, y + dir * 1.3, x, y + dir * 1.05);
-  ctx.closePath();
-  ctx.fill();
-}
+const flagName = type => ({ eighth: "8th", "16th": "16th", "32nd": "32nd" }[type]);
 
-const ACCIDENTALS = {
-  sharp(ctx) {
-    ctx.fillRect(-0.24, -1.25, 0.09, 2.35);
-    ctx.fillRect(0.15, -1.1, 0.09, 2.35);
-    slab(ctx, -0.45, -0.55, 0.45, -0.25, 0.2);
-    slab(ctx, -0.45, 0.25, 0.45, 0.55, 0.2);
-  },
-  flat(ctx) {
-    ctx.fillRect(-0.32, -0.5, 0.1, 2.3);
-    ctx.lineWidth = 0.16;
-    ctx.beginPath();
-    ctx.moveTo(-0.27, 0.1);
-    ctx.bezierCurveTo(0.2, 0.75, 0.75, 0.25, -0.27, -0.45);
-    ctx.stroke();
-  },
-  natural(ctx) {
-    ctx.fillRect(-0.3, -0.6, 0.09, 2.0);
-    ctx.fillRect(0.21, -1.4, 0.09, 2.0);
-    slab(ctx, -0.3, -0.62, 0.3, -0.38, 0.2);
-    slab(ctx, -0.3, 0.38, 0.3, 0.62, 0.2);
-  },
-};
-
-function clefGlyph(clef) {
-  if (clef === "bass") return canvasGlyph(1.8, 1.8, 3, 3, ctx => textGlyph(ctx, "\u{1D122}", `1px ${SYMBOL_FONTS}`, 3.5, 0.3));
-  return canvasGlyph(1.8, 1.8, 4.2, 4.2, ctx => textGlyph(ctx, "\u{1D11E}", `1px ${SYMBOL_FONTS}`, 7.2, 0.3));
-}
-
+// Rests are anchored on the middle line, horizontally centered.
 function restGlyph(type) {
-  if (type === "whole") return canvasGlyph(0.8, 0.8, 1.5, 1.5, ctx => ctx.fillRect(-0.6, 0.5, 1.2, 0.5));
-  if (type === "half") return canvasGlyph(0.8, 0.8, 1.5, 1.5, ctx => ctx.fillRect(-0.6, 0, 1.2, 0.5));
-  const char = { quarter: "\u{1D13D}", eighth: "\u{1D13E}", "16th": "\u{1D13F}" }[type];
-  const height = { quarter: 2.9, eighth: 2.0, "16th": 2.9 }[type];
-  return canvasGlyph(1, 1, 2, 2, ctx => textGlyph(ctx, char, `1px ${SYMBOL_FONTS}`, height, 0));
+  const ch = { whole: G.restWhole, half: G.restHalf, quarter: G.restQuarter,
+    eighth: G.rest8th, "16th": G.rest16th, "32nd": G.rest32nd }[type] ?? G.restQuarter;
+  // Whole rests hang from the 4th line; the others sit on the middle line.
+  const y = type === "whole" ? 1 : 0;
+  return canvasGlyph(1.2, 1.2, 2.4, 2.4, ctx => music(ctx, ch, -textWidth(ctx, ch) / 2, y));
 }
 
 function glowGlyph() {
@@ -141,43 +170,5 @@ function glowGlyph() {
   return { texture, w: 1, h: 1, ax: 0.5, ay: 0.5 };
 }
 
-// Draws text scaled to `height` staff spaces, centered horizontally, with its
-// ink centered at y = centerY.
-function textGlyph(ctx, text, font, height, centerY) {
-  ctx.save();
-  ctx.scale(1, -1); // text wants y down
-  const family = font.replace(/^(bold )?1px /, "");
-  const weight = font.startsWith("bold") ? "bold " : "";
-  ctx.font = `${weight}100px ${family}`;
-  let m = ctx.measureText(text);
-  const inkH = m.actualBoundingBoxAscent + m.actualBoundingBoxDescent || 100;
-  ctx.font = `${weight}${(100 * height) / inkH}px ${family}`;
-  m = ctx.measureText(text);
-  const x = (m.actualBoundingBoxLeft - m.actualBoundingBoxRight) / 2;
-  const y = -centerY - (m.actualBoundingBoxDescent - m.actualBoundingBoxAscent) / 2;
-  ctx.fillText(text, x, y);
-  ctx.restore();
-}
-
-function ellipse(ctx, x, y, rx, ry, rot, sub = false) {
-  if (!sub) ctx.beginPath();
-  else ctx.moveTo(x + rx * Math.cos(rot), y + rx * Math.sin(rot));
-  ctx.ellipse(x, y, rx, ry, rot, 0, Math.PI * 2);
-}
-
-function circle(ctx, x, y, r) {
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-}
-
-// Thick slanted bar from (x0, y0) to (x1, y1) with vertical thickness t.
-function slab(ctx, x0, y0, x1, y1, t) {
-  ctx.beginPath();
-  ctx.moveTo(x0, y0 - t / 2);
-  ctx.lineTo(x1, y1 - t / 2);
-  ctx.lineTo(x1, y1 + t / 2);
-  ctx.lineTo(x0, y0 + t / 2);
-  ctx.closePath();
-  ctx.fill();
-}
+// Width (staff spaces) a few header items need, for laying out the start of the staff.
+export const METRICS = { clef: 2.8, keyAccidental: 1.0, timeSig: 2.0, noteHead: HEAD_W };

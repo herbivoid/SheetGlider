@@ -4,13 +4,28 @@ A character glides along a staff of sheet music that's laid on a 3D ribbon, hopp
 
 ## Run
 
-Needs Python 3.10+ and ffmpeg on your PATH. Nothing to install with pip yet.
+Needs Python 3.10+ and ffmpeg on your PATH, plus music21 for reading MusicXML:
+
+```bash
+python -m pip install music21
+```
 
 ```bash
 python run.py
 ```
 
 This opens `http://127.0.0.1:8765/app/` in your browser. Settings are in the panel on the right; **Export video** is at the bottom. Exports go to `output/`.
+
+## Music input
+
+Load a **MusicXML** file (`.musicxml`, `.xml`, or compressed `.mxl`) with **Load MusicXML…** or by dropping it on the page. MuseScore (free) and every other notation program can export MusicXML. MuseScore can also open a MIDI file and save it as MusicXML.
+
+- One instrument is used: a single staff, or both staves of a piano part.
+- The tempo comes from the file's metronome marks (tempo changes included). The **tempo** setting scales it.
+- **Clawd follows** picks the top staff, the bottom staff, or the highest note.
+- Repeats are played as written, not expanded. Grace notes are skipped.
+
+`examples/piano-example.musicxml` is a short test piece for the grand staff.
 
 ## Output formats
 
@@ -20,27 +35,42 @@ This opens `http://127.0.0.1:8765/app/` in your browser. Settings are in the pan
 | WebM VP9 with alpha | Web, OBS, browsers. Small files, slow to encode. |
 | PNG sequence | Fallback that every editor can import. |
 
+With **also save score audio** on, a `.wav` of the preview synth is saved next to the video. It's lined up with the video, lead-in included.
+
 **DaVinci Resolve:** if the background shows black instead of transparent, right-click the clip in the Media Pool, choose **Clip Attributes…**, and set **Alpha Mode** to *Straight*.
+
+## Ribbon shapes
+
+Pick a **shape** preset: flat, arch, valley, waterslide, approach, fly-in, fly-away, swoop, slalom, twist, barrel-roll, corkscrew, rollercoaster, gentle-waves, coaster-flip, wild-coaster, carousel, loop, spiral.
+
+**Shape tweaks** layer on top of any preset:
+- height ×, depth ×, and the shape's own twist ×
+- an arch
+- extra waves
+- two extra twists, each placed anywhere along the piece (0 = start, 1 = end) and spread over any length
 
 ## Custom characters
 
-A character is a folder in `characters/` holding `character.json` and up to 5 images:
+A character is a folder in `characters/` holding `character.json` and up to 6 images:
 
 | Sprite | When it's shown |
 |---|---|
-| `glide` | In the air between notes (required; used for any missing sprite) |
-| `anticipate` | Crouch just before a jump |
-| `hit` | Landing on a note |
+| `glide` | In the air, and standing on short notes (required; stands in for any missing sprite) |
+| `crouch` | Just before a jump, and landing on a short note |
+| `hit` | Landing on a long note: a little celebration |
 | `ride` | Holding a long note |
 | `rest` | Floating during rests |
+| `surf` | Gliding through a fast run (falls back to `ride`) |
 
 In `character.json`, `anchor` is the point that touches the note, as fractions from the bottom-left of the image (`[0.5, 0]` means bottom-center). Set `pixelArt: true` to keep pixel art crisp. Clawd's sprites are generated from the ASCII grids in `tools/make_clawd.py`; edit those and re-run the script to change him.
 
-## Status
+**Motion** settings control:
+- which notes count as **long** (*celebrate notes ≥*, in seconds)
+- which count as **fast** (*fast note <*)
+- how many fast notes in a row make a **run** that gets surfed instead of hopped
 
-Phase 0 is a pipeline proof. It uses a built-in demo melody, five preset ribbon shapes, and a preview synth.
+All of these are based on real time, so the tempo matters as well as the note type.
 
-Next up:
-- Phase 1: MusicXML input, Bravura music font, grand staff
-- Phase 2: a curve editor for designing the ribbon
-- Phase 3: polish (glow layer, ghost clones, beams, ties)
+## Credits
+
+Music glyphs: [Bravura](https://github.com/steinbergmedia/bravura) by Steinberg, under the SIL Open Font License (`app/fonts/Bravura-LICENSE.txt`).

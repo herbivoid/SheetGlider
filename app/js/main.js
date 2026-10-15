@@ -1,113 +1,65 @@
 import * as THREE from "three";
-import GUI from "lil-gui";
-import { DEMO, buildScore } from "./score.js";
+import { demoRaw, finalizeScore } from "./score.js";
 import { buildSpacing } from "./spacing.js";
 import { Ribbon } from "./ribbon.js";
-import { RIBBON_PRESETS } from "./presets.js";
-import { HEADER_WIDTH, StaffView } from "./staff.js";
+import { buildShape } from "./presets.js";
+import { StaffView, headerLayout } from "./staff.js";
 import { CharacterView, loadCharacter } from "./character.js";
+import { Particles } from "./particles.js";
 import { FollowCamera } from "./camera.js";
 import { PreviewSynth } from "./audio.js";
 import { exportVideo } from "./exporter.js";
-
-const params = {
-  // Look
-  staffColor: "#f4efe6",
-  noteColor: "#f4efe6",
-  playedColor: "#f4efe6",
-  glowColor: "#d97757",
-  lineThickness: 0.13,
-  characterSize: 3.0,
-  glowSize: 3.4,
-  glowStrength: 0.9,
-  glowDecay: 0.35,
-  // Spacing
-  quarterWidth: 4.5,
-  spacingExponent: 0.65,
-  speedSmoothing: 0.75,
-  barGap: 1.6,
-  accidentalGap: 1.0,
-  // Ribbon
-  preset: "twist",
-  readability: 0.6,
-  flipSharpness: 0.2,
-  // Motion
-  hopHeight: 3,
-  hopFraction: 0.6,
-  hopMin: 0.08,
-  hopMax: 0.42,
-  hitHold: 0.16,
-  restLift: 2.5,
-  restThreshold: 0.35,
-  squash: 1,
-  lean: 1,
-  // Camera
-  camDistance: 50,
-  fov: 30,
-  pitch: 6,
-  yaw: 0,
-  lead: 0.12,
-  followY: 0.35,
-  camSmooth: 0.7,
-  // Timing
-  bpm: DEMO.bpm,
-  preroll: 1.5,
-  postroll: 2,
-  // Preview
-  background: "checker",
-  sound: true,
-  // Export
-  resolution: "1920x1080",
-  fps: 60,
-  format: "prores",
-};
-
-const RESOLUTIONS = {
-  "1280x720": [1280, 720], "1920x1080": [1920, 1080], "2560x1440": [2560, 1440],
-  "3840x2160": [3840, 2160], "1080x1920 (vertical)": [1080, 1920], "1080x1080": [1080, 1080],
-};
+import { loadMusicFont } from "./glyphs.js";
+import { params, RESOLUTIONS } from "./params.js";
+import { buildGui } from "./gui.js";
 
 const canvas = document.getElementById("view");
 const frameEl = document.getElementById("frame");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
 renderer.setClearColor(0x000000, 0);
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(params.fov, 16 / 9, 0.5, 2000);
+const camera = new THREE.PerspectiveCamera(params.fov, 16 / 9, 0.5, 4000);
 const rig = new FollowCamera(params);
 const synth = new PreviewSynth();
 
-let character = null; // loaded pack
-let world = null;     // { score, staff, hero, t0, t1 }
+let character = null; // loaded character pack
+let raw = demoRaw();  // the current score, before tempo scaling
+let world = null;     // { score, staff, hero, particles, t0, t1 }
+let panel = null;
 let t = 0;
 let playing = false;
 let playStart = { wall: 0, t: 0 };
 let exporting = false;
 
-function exportSize() { return RESOLUTIONS[params.resolution]; }
+const exportSize = () => RESOLUTIONS[params.resolution];
+const rawBpm = () => raw.tempo?.[0]?.bpm ?? 120;
 
 function rebuild() {
   if (world) {
-    scene.remove(world.staff.group, world.hero.mesh);
+    scene.remove(world.staff.group, world.hero.mesh, world.particles.points);
     world.staff.dispose();
     world.hero.dispose();
+    world.particles.dispose();
   }
-  const score = buildScore(DEMO, params.bpm);
+  const score = finalizeScore(raw, params.bpm / rawBpm());
   const spacing = buildSpacing(score, {
     quarterWidth: params.quarterWidth, exponent: params.spacingExponent,
     smoothBeats: params.speedSmoothing, barGap: params.barGap, accidentalGap: params.accidentalGap,
   });
-  const length = HEADER_WIDTH + spacing.x(score.endBeat) + 3;
-  const ribbon = new Ribbon(RIBBON_PRESETS[params.preset](length));
+  const length = headerLayout(score).width + spacing.x(score.endBeat) + 3;
+  const ribbon = new Ribbon(buildShape(params.preset, length, params));
   const staff = new StaffView({ score, spacing, ribbon, params });
-  const hero = new CharacterView({
-    character, score, spacing, ribbon, params, sOf: beat => staff.sOf(beat),
-  });
-  scene.add(staff.group, hero.mesh);
+  const sOf = beat => staff.sOf(beat);
+  const follow = params.follow === "top" || params.follow < score.staves.length ? params.follow : 0;
+  const hero = new CharacterView({ character, score, ribbon, params, sOf, follow });
+  const particles = new Particles({ hero, ribbon, score, params, sOf });
+  scene.add(staff.group, hero.mesh, particles.points);
   const t0 = -params.preroll;
-  const t1 = score.endBeat * score.secondsPerBeat + params.postroll;
+  const t1 = score.timeOf(score.endBeat) + params.postroll;
   const [w, h] = exportSize();
-  rig.bake({ t0, t1, aspect: w / h, ribbon, sEnd: staff.sEnd, positionAt: (tt, v) => hero.positionAt(tt, v) });
-  world = { score, staff, hero, t0, t1 };
+  const vRange = [staff.staffCenter(score.staves.length - 1) - 3, 3];
+  rig.bake({ t0, t1, aspect: w / h, ribbon, sEnd: staff.sEnd, vRange, positionAt: (tt, v) => hero.positionAt(tt, v) });
+  world = { score, staff, hero, particles, t0, t1 };
   t = THREE.MathUtils.clamp(t, t0, t1);
   layout();
 }
@@ -116,6 +68,7 @@ function renderAt(time) {
   rig.apply(camera, time);
   world.hero.update(time, camera);
   world.staff.update(time, camera);
+  world.particles.update(time);
   renderer.render(scene, camera);
 }
 
@@ -136,6 +89,57 @@ function layout() {
   renderer.setSize(cw, ch, false);
   camera.aspect = w / h;
 }
+
+// ---- Messages -------------------------------------------------------------
+const toast = document.getElementById("toast");
+let toastTimer = 0;
+function notify(message, isError = false) {
+  toast.textContent = message;
+  toast.className = isError ? "error" : "";
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.hidden = true; }, isError ? 9000 : 5000);
+}
+
+// ---- Loading scores -------------------------------------------------------
+const fileInput = document.createElement("input");
+fileInput.type = "file";
+fileInput.accept = ".musicxml,.xml,.mxl";
+fileInput.addEventListener("change", () => {
+  if (fileInput.files[0]) loadScoreFile(fileInput.files[0]);
+  fileInput.value = "";
+});
+
+async function loadScoreFile(file) {
+  notify(`Reading ${file.name}…`);
+  try {
+    const res = await fetch(`/api/parse?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!data.notes.length) throw new Error("no notes found in this file");
+    useScore(data);
+    notify([`Loaded “${data.title}”.`, ...(data.warnings ?? [])].join(" "));
+  } catch (err) {
+    notify(`Couldn't load ${file.name}: ${err.message}`, true);
+  }
+}
+
+function useScore(newRaw) {
+  if (playing) setPlaying(false);
+  raw = newRaw;
+  params.bpm = Math.round(rawBpm());
+  panel.refreshBpm();
+  panel.setScoreName(raw.title);
+  t = -params.preroll;
+  rebuild();
+}
+
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => {
+  e.preventDefault();
+  const file = e.dataTransfer.files[0];
+  if (file) loadScoreFile(file);
+});
 
 // ---- Transport ------------------------------------------------------------
 const playBtn = document.getElementById("play");
@@ -212,8 +216,8 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
   let result = null;
   try {
     result = await exportVideo({
-      renderer, width: w, height: h, renderAt, t0: from, t1: to, fps: params.fps, format: params.format, name: world.score.title,
-      cancelled: () => cancelRequested,
+      renderer, width: w, height: h, renderAt, t0: from, t1: to, fps: params.fps, format: params.format,
+      name: world.score.title, cancelled: () => cancelRequested,
       onProgress: (done, total) => {
         progressEl.value = done / total;
         const secs = (performance.now() - started) / 1000;
@@ -221,8 +225,16 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
         detailEl.textContent = `Frame ${done} / ${total}  ·  ~${Math.ceil(eta)} s left`;
       },
     });
+    let lines = result.ok ? [`Saved to:\n${result.path}`] : [result.log];
+    if (result.ok && params.exportAudio) {
+      detailEl.textContent = "Rendering audio…";
+      const wav = await synth.renderWav(world.score, from, to);
+      const res = await fetch(`/api/export/audio?video=${encodeURIComponent(result.path)}`, { method: "POST", body: wav });
+      const saved = await res.json();
+      lines.push(saved.error ? `Audio failed: ${saved.error}` : `Audio:\n${saved.path}`);
+    }
     titleEl.textContent = result.ok ? "Export finished" : "Export failed";
-    detailEl.textContent = result.ok ? `Saved to:\n${result.path}` : result.log;
+    detailEl.textContent = lines.join("\n\n");
   } catch (err) {
     titleEl.textContent = err.message === "cancelled" ? "Export cancelled" : "Export failed";
     detailEl.textContent = err.message === "cancelled" ? "" : String(err.message);
@@ -235,79 +247,32 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
   return result;
 }
 
-// ---- Settings panel -------------------------------------------------------
+// ---- Startup --------------------------------------------------------------
 function setBackground() {
   frameEl.className = `bg-${params.background}`;
 }
 
-function buildGui() {
-  const gui = new GUI({ title: "SheetGlider" });
-  const re = () => rebuild();
-
-  const look = gui.addFolder("Look");
-  look.addColor(params, "staffColor").name("staff color").onChange(c => world.staff.lineMaterial.color.set(c));
-  look.addColor(params, "noteColor").name("note color").onFinishChange(re);
-  look.addColor(params, "playedColor").name("played note color");
-  look.addColor(params, "glowColor").name("hit glow color").onFinishChange(re);
-  look.add(params, "characterSize", 1, 8, 0.1).name("character size");
-  look.add(params, "glowSize", 0, 10, 0.1).name("glow size");
-  look.add(params, "glowStrength", 0, 1, 0.01).name("glow strength");
-  look.add(params, "glowDecay", 0.05, 1.5, 0.01).name("glow decay (s)");
-  look.add(params, "lineThickness", 0.04, 0.4, 0.01).name("line thickness").onFinishChange(re);
-
-  const ribbon = gui.addFolder("Ribbon");
-  ribbon.add(params, "preset", Object.keys(RIBBON_PRESETS)).name("shape").onChange(re);
-  ribbon.add(params, "readability", 0, 1, 0.01).name("edge-on readability");
-  ribbon.add(params, "flipSharpness", 0.02, 0.6, 0.01).name("flip width");
-
-  const spacing = gui.addFolder("Spacing");
-  spacing.add(params, "quarterWidth", 1.5, 10, 0.1).name("quarter note width").onFinishChange(re);
-  spacing.add(params, "spacingExponent", 0.3, 1, 0.01).name("time → space exponent").onFinishChange(re);
-  spacing.add(params, "speedSmoothing", 0, 4, 0.05).name("speed smoothing (beats)").onFinishChange(re);
-
-  const motion = gui.addFolder("Motion");
-  motion.add(params, "hopHeight", 0, 8, 0.1).name("hop height").onFinishChange(re);
-  motion.add(params, "hopMax", 0.15, 1, 0.01).name("max hop time (s)").onFinishChange(re);
-  motion.add(params, "restLift", 0, 6, 0.1).name("float during rests").onFinishChange(re);
-  motion.add(params, "squash", 0, 2, 0.05).name("squash & stretch");
-  motion.add(params, "lean", 0, 3, 0.05).name("lean");
-  motion.close();
-
-  const cam = gui.addFolder("Camera");
-  cam.add(params, "camDistance", 15, 200, 1).name("distance").onFinishChange(re);
-  cam.add(params, "fov", 10, 70, 1).name("field of view").onFinishChange(re);
-  cam.add(params, "pitch", -45, 60, 1).name("pitch (°)");
-  cam.add(params, "yaw", -60, 60, 1).name("yaw (°)");
-  cam.add(params, "lead", -0.3, 0.4, 0.01).name("look ahead").onFinishChange(re);
-  cam.add(params, "followY", 0, 1, 0.01).name("follow vertically").onFinishChange(re);
-  cam.add(params, "camSmooth", 0.1, 3, 0.05).name("responsiveness").onFinishChange(re);
-  cam.close();
-
-  const timing = gui.addFolder("Timing");
-  timing.add(params, "bpm", 30, 240, 1).onFinishChange(re);
-  timing.add(params, "preroll", 0, 5, 0.1).name("lead-in (s)").onFinishChange(re);
-  timing.add(params, "postroll", 0, 6, 0.1).name("tail (s)").onFinishChange(re);
-  timing.close();
-
-  const preview = gui.addFolder("Preview");
-  preview.add(params, "background", ["checker", "dark", "light", "green", "blue"]).onChange(setBackground);
-  preview.add(params, "sound").name("preview sound");
-
-  const exp = gui.addFolder("Export");
-  exp.add(params, "resolution", Object.keys(RESOLUTIONS)).onChange(re);
-  exp.add(params, "fps", [24, 25, 30, 50, 60]);
-  exp.add(params, "format", { "ProRes 4444 (.mov)": "prores", "WebM VP9 alpha": "webm", "PNG sequence": "png" });
-  exp.add({ go: () => runExport() }, "go").name("⬇ Export video");
-}
-
 async function main() {
+  await loadMusicFont();
   character = await loadCharacter("../characters/clawd");
-  buildGui();
+  params.bpm = Math.round(rawBpm());
+  panel = buildGui(params, {
+    rebuild,
+    setBackground,
+    loadFile: () => fileInput.click(),
+    useDemo: () => { useScore(demoRaw()); notify("Using the demo melody."); },
+    exportVideo: () => runExport(),
+    restyleStaff: c => world.staff.lineMaterial.color.set(c),
+  });
+  panel.setScoreName(raw.title);
   setBackground();
   rebuild();
   window.addEventListener("resize", layout);
   // Handle for debugging / scripted exports from the console.
-  window.sheetglider = { params, rebuild, runExport, renderAt, get world() { return world; }, get t() { return t; }, set t(v) { t = v; } };
+  window.sheetglider = {
+    params, rebuild, runExport, renderAt, useScore,
+    get world() { return world; }, get t() { return t; }, set t(v) { t = v; },
+  };
   tick();
 }
 

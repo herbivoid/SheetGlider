@@ -1,4 +1,30 @@
-// Tiny preview synth so you can hear what Clawd is hitting. Not part of the export.
+// Tiny synth for hearing the score: live preview, and rendered to a WAV file
+// for export (lined up with the video, lead-in included).
+
+function scheduleNotes(ctx, destination, score, fromSec, startAt) {
+  const voices = [];
+  for (const n of score.notes) {
+    if (n.tieFromPrev) continue; // tied notes sound as one long note
+    const on = score.timeOf(n.start) - fromSec;
+    if (on < 0) continue;
+    const len = Math.max(0.08, (score.timeOf(n.start + n.soundingDur) - score.timeOf(n.start)) * 0.95);
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.value = 440 * 2 ** ((n.midi - 69) / 12);
+    const env = ctx.createGain();
+    const t = startAt + on;
+    env.gain.setValueAtTime(0, t);
+    env.gain.linearRampToValueAtTime(1, t + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.5, t + 0.12);
+    env.gain.setValueAtTime(0.5, t + len);
+    env.gain.linearRampToValueAtTime(0, t + len + 0.08);
+    osc.connect(env).connect(destination);
+    osc.start(t);
+    osc.stop(t + len + 0.1);
+    voices.push(osc);
+  }
+  return voices;
+}
 
 export class PreviewSynth {
   constructor() {
@@ -7,36 +33,15 @@ export class PreviewSynth {
     this.volume = 0.2;
   }
 
-  // Schedules every note that starts at or after `fromSec`, relative to now.
+  // Plays every note that starts at or after `fromSec` (score time).
   play(score, fromSec) {
     this.stop();
     this.ctx ??= new AudioContext();
     this.ctx.resume();
-    const now = this.ctx.currentTime + 0.03;
-    const master = this.ctx.createGain();
-    master.gain.value = this.volume;
-    master.connect(this.ctx.destination);
-    this.master = master;
-    const spb = score.secondsPerBeat;
-    for (const n of score.notes) {
-      const on = n.start * spb - fromSec;
-      if (on < 0) continue;
-      const len = Math.max(0.08, n.dur * spb * 0.95);
-      const osc = this.ctx.createOscillator();
-      osc.type = "triangle";
-      osc.frequency.value = 440 * 2 ** ((n.midi - 69) / 12);
-      const env = this.ctx.createGain();
-      const t = now + on;
-      env.gain.setValueAtTime(0, t);
-      env.gain.linearRampToValueAtTime(1, t + 0.01);
-      env.gain.exponentialRampToValueAtTime(0.5, t + 0.12);
-      env.gain.setValueAtTime(0.5, t + len);
-      env.gain.linearRampToValueAtTime(0, t + len + 0.08);
-      osc.connect(env).connect(master);
-      osc.start(t);
-      osc.stop(t + len + 0.1);
-      this.voices.push(osc);
-    }
+    this.master = this.ctx.createGain();
+    this.master.gain.value = this.volume;
+    this.master.connect(this.ctx.destination);
+    this.voices = scheduleNotes(this.ctx, this.master, score, fromSec, this.ctx.currentTime + 0.03);
   }
 
   stop() {
@@ -47,4 +52,48 @@ export class PreviewSynth {
     this.master?.disconnect();
     this.master = null;
   }
+
+  // Renders score time t0..t1 to a 16-bit stereo WAV (ArrayBuffer).
+  async renderWav(score, t0, t1, sampleRate = 48000) {
+    const length = Math.ceil((t1 - t0) * sampleRate);
+    const ctx = new OfflineAudioContext(2, length, sampleRate);
+    const master = ctx.createGain();
+    master.gain.value = this.volume;
+    master.connect(ctx.destination);
+    // Notes before t0 are skipped; a negative t0 (lead-in) just delays everything.
+    scheduleNotes(ctx, master, score, Math.max(0, t0), Math.max(0, -t0));
+    const buffer = await ctx.startRendering();
+    return encodeWav(buffer);
+  }
+}
+
+function encodeWav(buffer) {
+  const channels = buffer.numberOfChannels;
+  const frames = buffer.length;
+  const bytes = 44 + frames * channels * 2;
+  const out = new DataView(new ArrayBuffer(bytes));
+  const text = (offset, s) => [...s].forEach((ch, i) => out.setUint8(offset + i, ch.charCodeAt(0)));
+  text(0, "RIFF");
+  out.setUint32(4, bytes - 8, true);
+  text(8, "WAVE");
+  text(12, "fmt ");
+  out.setUint32(16, 16, true);
+  out.setUint16(20, 1, true); // PCM
+  out.setUint16(22, channels, true);
+  out.setUint32(24, buffer.sampleRate, true);
+  out.setUint32(28, buffer.sampleRate * channels * 2, true);
+  out.setUint16(32, channels * 2, true);
+  out.setUint16(34, 16, true);
+  text(36, "data");
+  out.setUint32(40, frames * channels * 2, true);
+  const data = [...Array(channels)].map((_, c) => buffer.getChannelData(c));
+  let o = 44;
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < channels; c++) {
+      const v = Math.max(-1, Math.min(1, data[c][i]));
+      out.setInt16(o, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      o += 2;
+    }
+  }
+  return out.buffer;
 }

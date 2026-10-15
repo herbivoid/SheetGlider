@@ -4,6 +4,7 @@ import queue
 import shutil
 import socket
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -55,7 +56,11 @@ class ExportJob:
         self.lock = threading.Lock()
         OUTPUT.mkdir(exist_ok=True)
         safe = "".join(c for c in name if c.isalnum() or c in "-_") or "sheetglider"
-        stem = f"{safe}_{time.strftime('%Y%m%d-%H%M%S')}"
+        base = f"{safe}_{time.strftime('%Y%m%d-%H%M%S')}"
+        stem, n = base, 1
+        while any(OUTPUT.glob(stem + "*")):  # never overwrite an earlier export
+            n += 1
+            stem = f"{base}-{n}"
         if fmt == "png":
             self.path = OUTPUT / stem
             self.path.mkdir()
@@ -130,6 +135,32 @@ class ExportJob:
 JOBS = {}
 
 
+def parse_upload(name, data):
+    """Parses an uploaded MusicXML file into the browser's raw score format."""
+    from .musicxml import parse_file
+
+    suffix = Path(name).suffix.lower()
+    if suffix not in (".musicxml", ".xml", ".mxl"):
+        raise ValueError("please choose a MusicXML file (.musicxml, .xml or .mxl)")
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / ("score" + suffix)
+        path.write_bytes(data)
+        result = parse_file(path)
+    if result["title"] == "score":
+        result["title"] = Path(name).stem
+    return result
+
+
+def save_audio(video_path, data):
+    """Saves a WAV next to an exported video (same name, .wav)."""
+    video = Path(video_path).resolve()
+    if OUTPUT.resolve() not in video.parents:
+        raise ValueError("audio can only be saved next to an export in the output folder")
+    target = video.with_suffix(".wav") if video.suffix else video.parent / (video.name + ".wav")
+    target.write_bytes(data)
+    return {"ok": True, "path": str(target)}
+
+
 class Handler(SimpleHTTPRequestHandler):
     protocol_version = "HTTP/1.1"  # keep connections alive between frame uploads
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, **MIME}
@@ -182,6 +213,10 @@ class Handler(SimpleHTTPRequestHandler):
                 job_id = uuid.uuid4().hex
                 JOBS[job_id] = job
                 self.send_json({"id": job_id, "path": str(job.path)})
+            elif url.path == "/api/parse":
+                self.send_json(parse_upload(query.get("name", ["score.musicxml"])[0], body))
+            elif url.path == "/api/export/audio":
+                self.send_json(save_audio(query.get("video", [""])[0], body))
             elif url.path == "/api/export/frame":
                 job = JOBS[query["id"][0]]
                 job.add_frame(int(query["i"][0]), body, query.get("z") == ["1"])

@@ -1,16 +1,30 @@
 import * as THREE from "three";
-import { glyph } from "./glyphs.js";
+import { METRICS, glyph } from "./glyphs.js";
 import { makeFrame } from "./ribbon.js";
 import { placeQuad, quadAxes } from "./facing.js";
 
-// Builds everything drawn on the ribbon: staff lines, barlines, clef, time
-// signature, notes (+ stems, flags, accidentals, dots, ledger lines), rests and
-// hit glows. Lines are thin tubes (visible from any angle, even edge-on);
-// glyphs are quads re-oriented every frame (see facing.js).
+// Builds everything drawn on the ribbon: staff lines, barlines, clefs, key and
+// time signatures, notes (+ stems, flags, accidentals, dots, ledger lines),
+// rests and hit glows. Lines are thin tubes (visible from any angle, even
+// edge-on); glyphs are quads re-oriented every frame (see facing.js).
 
-export const HEADER_WIDTH = 7.5; // room for clef + time signature before the music
-const STAFF_GAP = 10;           // distance between staff centers (grand staff)
+export const STAFF_GAP = 10; // distance between staff centers (grand staff), in staff spaces
 const QUAD = new THREE.PlaneGeometry(1, 1);
+const HEAD_HALF = METRICS.noteHead / 2;
+
+// Key signature positions (half-spaces from the middle line) in treble clef.
+const KEY_SHARPS = [4, 1, 5, 2, -1, 3, 0];
+const KEY_FLATS = [0, 3, -1, 2, -2, 1, -3];
+const CLEF_KEY_SHIFT = { treble: 0, bass: -2, alto: -1, tenor: 1 };
+
+// Horizontal layout of the start of the staff (clef, key signature, time signature).
+export function headerLayout(score) {
+  const clefX = 0.8;
+  const keyX = clefX + METRICS.clef + 0.5;
+  const nKey = Math.abs(score.keyFifths);
+  const timeX = keyX + nKey * METRICS.keyAccidental + (nKey ? 0.6 : 0) + METRICS.timeSig / 2;
+  return { clefX, keyX, timeX, width: timeX + METRICS.timeSig / 2 + 2.2 };
+}
 
 class StaffCurve extends THREE.Curve {
   constructor(ribbon, s0, s1, v0, v1 = v0) {
@@ -26,80 +40,113 @@ export class StaffView {
   constructor({ score, spacing, ribbon, params }) {
     Object.assign(this, { score, spacing, ribbon, params });
     this.group = new THREE.Group();
-    this.quads = [];      // { mesh, s, v, g, k }
-    this.noteVisuals = []; // { note, onset, material, glow }
+    this.quads = [];       // { mesh, s, v, g, colorFrom }
+    this.noteVisuals = []; // { onset, material, glow }
     this.lineMaterial = new THREE.MeshBasicMaterial({ color: params.staffColor });
-    this.sEnd = HEADER_WIDTH + spacing.x(score.endBeat) + 3;
+    this.header = headerLayout(score);
+    this.sEnd = this.sOf(score.endBeat) + 3;
     this.frame = makeFrame();
     this.build();
   }
 
-  sOf(beat) { return HEADER_WIDTH + this.spacing.x(beat); }
+  sOf(beat) { return this.header.width + this.spacing.x(beat); }
   staffCenter(staff) { return -staff * STAFF_GAP; }
 
   build() {
-    const { score, params } = this;
+    const { score, params, header } = this;
     const lw = params.lineThickness / 2;
+    const n = score.staves.length;
+    const top = 2;
+    const bottom = this.staffCenter(n - 1) - 2;
+    const color = params.noteColor;
 
     score.staves.forEach((staffDef, staff) => {
       const c = this.staffCenter(staff);
       for (let l = -2; l <= 2; l++) this.tube(0, this.sEnd, c + l, c + l, lw);
-      this.tube(0, 0, c - 2, c + 2, lw); // system start line
-      for (const bar of score.bars) {
-        const s = this.sOf(bar) - params.barGap * 0.55;
-        const last = Math.abs(bar - score.endBeat) < 1e-6;
-        if (last) {
-          this.tube(this.sEnd - 0.75, this.sEnd - 0.75, c - 2, c + 2, lw * 1.2);
-          this.tube(this.sEnd - 0.2, this.sEnd - 0.2, c - 2, c + 2, 0.25);
-        } else {
-          this.tube(s, s, c - 2, c + 2, lw * 1.2);
-        }
+      this.addGlyph(`clef:${staffDef.clef}`, header.clefX, c, color);
+      const order = score.keyFifths >= 0 ? KEY_SHARPS : KEY_FLATS;
+      const name = score.keyFifths >= 0 ? "sharp" : "flat";
+      const shift = CLEF_KEY_SHIFT[staffDef.clef] ?? 0;
+      for (let i = 0; i < Math.abs(score.keyFifths); i++) {
+        const s = header.keyX + (i + 1) * METRICS.keyAccidental - 0.15;
+        this.addGlyph(`acc:${name}`, s, c + (order[i] + shift) / 2, color);
       }
-      this.addGlyph(`clef:${staffDef.clef}`, 2.0, c, params.noteColor);
-      this.addGlyph(`digit:${score.beatsPerBar}`, 5.2, c + 1, params.noteColor);
-      this.addGlyph(`digit:${score.beatUnit}`, 5.2, c - 1, params.noteColor);
+      this.addGlyph(`time:${score.timeSig[0]}`, header.timeX, c + 1, color);
+      this.addGlyph(`time:${score.timeSig[1]}`, header.timeX, c - 1, color);
     });
 
-    for (const note of score.notes) this.addNote(note);
+    // System start line (+ brace for several staves) and barlines through all staves.
+    this.tube(0, 0, bottom, top, lw);
+    if (n > 1) this.addGlyph(`brace:${top - bottom}`, 0, (top + bottom) / 2, color);
+    for (const bar of score.bars) {
+      if (Math.abs(bar - score.endBeat) < 1e-6) {
+        this.tube(this.sEnd - 0.75, this.sEnd - 0.75, bottom, top, lw * 1.2);
+        this.tube(this.sEnd - 0.2, this.sEnd - 0.2, bottom, top, 0.25);
+      } else {
+        const s = this.sOf(bar) - params.barGap * 0.55;
+        this.tube(s, s, bottom, top, lw * 1.2);
+      }
+    }
+
+    // Chords (same staff, start and note type) share one stem direction, set by
+    // the note farthest from the middle line; only the note at the stem's end gets the flag.
+    const chords = new Map();
+    for (const note of score.notes) {
+      const key = `${note.staff}|${note.start}|${note.type}`;
+      if (!chords.has(key)) chords.set(key, []);
+      chords.get(key).push(note);
+    }
+    for (const chord of chords.values()) {
+      const high = Math.max(...chord.map(n => n.pos));
+      const low = Math.min(...chord.map(n => n.pos));
+      const stem = high + low >= 0 ? "down" : "up";
+      const flagged = stem === "up" ? high : low;
+      for (const note of chord) this.addNote(note, stem, note.pos === flagged);
+    }
     for (const rest of score.rests) {
-      const s = this.sOf(rest.start);
-      this.addGlyph(`rest:${rest.type}`, s, this.staffCenter(rest.staff), params.noteColor);
+      let s = this.sOf(rest.start);
+      if (rest.measureRest) s = (this.sOf(rest.start) + this.sOf(rest.start + rest.dur) - params.barGap) / 2;
+      this.addGlyph(`rest:${rest.type}`, s, this.staffCenter(rest.staff), color);
     }
   }
 
-  addNote(note) {
+  addNote(note, stem, withFlag) {
     const { params } = this;
     const c = this.staffCenter(note.staff);
     const s = this.sOf(note.start);
     const v = c + note.pos / 2;
-    const stem = note.pos >= 0 ? "down" : "up";
-    const material = this.addGlyph(`note:${note.type}:${stem}`, s, v, params.noteColor).material;
+    const kind = `note:${note.type}:${stem}${withFlag ? "" : ":noflag"}`;
+    const material = this.addGlyph(kind, s, v, params.noteColor).material;
+    const half = note.type === "whole" ? 0.85 : HEAD_HALF;
     if (note.accidental !== null) {
-      const name = { 1: "sharp", "-1": "flat", 0: "natural" }[note.accidental] ?? "natural";
-      this.addGlyph(`acc:${name}`, s - 1.45, v, params.noteColor, material);
+      const name = { 1: "sharp", "-1": "flat", 0: "natural", 2: "doubleSharp", "-2": "doubleFlat" }[note.accidental];
+      this.addGlyph(`acc:${name ?? "natural"}`, s - half - 0.2, v, params.noteColor, material);
     }
     for (let d = 0; d < note.dots; d++) {
       const dv = note.pos % 2 === 0 ? 0.5 : 0; // dots sit in spaces
-      this.addGlyph("dot", s + 1.05 + d * 0.5, v + dv, params.noteColor, material);
+      this.addGlyph("dot", s + half + 0.25 + d * 0.5, v + dv, params.noteColor, material);
     }
     // Ledger lines
     const lw = params.lineThickness * 0.6;
-    for (let p = 6; p <= note.pos; p += 2) this.tube(s - 0.95, s + 0.95, c + p / 2, c + p / 2, lw);
-    for (let p = -6; p >= note.pos; p -= 2) this.tube(s - 0.95, s + 0.95, c + p / 2, c + p / 2, lw);
+    const ext = half + 0.4;
+    for (let p = 6; p <= note.pos; p += 2) this.tube(s - ext, s + ext, c + p / 2, c + p / 2, lw);
+    for (let p = -6; p >= note.pos; p -= 2) this.tube(s - ext, s + ext, c + p / 2, c + p / 2, lw);
 
-    const glowMat = new THREE.SpriteMaterial({
-      map: glyph("glow").texture, color: params.glowColor, transparent: true,
-      depthWrite: false, opacity: 0,
-    });
-    const glow = new THREE.Sprite(glowMat);
-    this.ribbon.pointAt(s, v, glow.position);
-    glow.renderOrder = 2;
-    this.group.add(glow);
-    this.noteVisuals.push({ note, onset: note.start * this.score.secondsPerBeat, material, glow });
+    let glow = null;
+    if (!note.tieFromPrev) {
+      glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glyph("glow").texture, color: params.glowColor, transparent: true,
+        depthWrite: false, opacity: 0,
+      }));
+      this.ribbon.pointAt(s, v, glow.position);
+      glow.renderOrder = 2;
+      this.group.add(glow);
+    }
+    this.noteVisuals.push({ onset: this.score.timeOf(note.start), material, glow });
   }
 
-  // Adds a glyph quad at (s, v). Pass `sharedMaterial` to tint it with another glyph (e.g. a note's accidental).
-  addGlyph(kind, s, v, color, sharedMaterial) {
+  // Adds a glyph quad at (s, v). `colorFrom` tints it like another glyph (e.g. a note's accidental).
+  addGlyph(kind, s, v, color, colorFrom) {
     const g = glyph(kind);
     const material = new THREE.MeshBasicMaterial({
       map: g.texture, color, transparent: true, side: THREE.DoubleSide, depthWrite: false,
@@ -108,8 +155,7 @@ export class StaffView {
     mesh.matrixAutoUpdate = false;
     mesh.renderOrder = 1;
     this.group.add(mesh);
-    const quad = { mesh, s, v, g, colorFrom: sharedMaterial };
-    this.quads.push(quad);
+    this.quads.push({ mesh, s, v, g, colorFrom });
     return { mesh, material };
   }
 
@@ -119,8 +165,7 @@ export class StaffView {
     const segments = Math.max(2, Math.ceil(len * 3));
     curve.arcLengthDivisions = segments * 2;
     const geo = new THREE.TubeGeometry(curve, segments, radius, 6, false);
-    const mesh = new THREE.Mesh(geo, this.lineMaterial);
-    this.group.add(mesh);
+    this.group.add(new THREE.Mesh(geo, this.lineMaterial));
   }
 
   update(t, camera) {
@@ -143,12 +188,12 @@ export class StaffView {
       const dt = t - nv.onset;
       if (dt < 0) {
         nv.material.color.copy(base);
-        nv.glow.material.opacity = 0;
-        nv.glow.visible = false;
+        if (nv.glow) nv.glow.visible = false;
         continue;
       }
       const e = Math.exp(-dt / params.glowDecay) * Math.min(1, dt / 0.02 + 0.3);
       nv.material.color.copy(played).lerp(hot, Math.min(1, e * 1.2));
+      if (!nv.glow) continue;
       nv.glow.visible = e > 0.01;
       nv.glow.material.opacity = e * params.glowStrength;
       const size = params.glowSize * (0.7 + 0.5 * (1 - e));

@@ -1,17 +1,26 @@
 import * as THREE from "three";
+import { monotoneCubic } from "./util.js";
 
 // The staff lives on a "ribbon": a 3D spine curve with a twist angle along it.
 // A point on the staff at distance `s` along the spine and height `v` (staff
 // spaces from the middle line) is  spine(s) + v * up(s).
 //
-// up(s) is world-up projected perpendicular to the spine, then rotated about the
-// spine's tangent by the twist angle, so an untwisted ribbon stays upright.
+// up(s) comes from one of two frame modes, then is rotated about the spine's
+// tangent by the twist angle:
+//   "world" (default): world-up projected perpendicular to the spine, so an
+//            untwisted ribbon stays upright. Right for paths that travel mostly
+//            sideways or into the distance.
+//   "axis":  axis × tangent, for paths curling within a plane (loops, spirals):
+//            the staff's top keeps pointing toward the inside of the curl.
 
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 
 export class Ribbon {
-  // controlPoints: [{ p: [x, y, z], twist: degrees }]
-  constructor(controlPoints) {
+  // shape: { points: [{ p: [x, y, z], twist: degrees }], frame?: { mode, axis } }
+  constructor(shape) {
+    const controlPoints = shape.points;
+    const axisMode = shape.frame?.mode === "axis";
+    const axis = new THREE.Vector3(...(shape.frame?.axis ?? [0, 0, 1])).normalize();
     this.controlPoints = controlPoints;
     const pts = controlPoints.map(c => new THREE.Vector3(...c.p));
     this.curve = new THREE.CatmullRomCurve3(pts, false, "centripetal", 0.5);
@@ -38,9 +47,10 @@ export class Ribbon {
       const a = i / n;
       this.curve.getPointAt(a, p);
       this.curve.getTangentAt(a, t).normalize();
-      u.copy(WORLD_UP).addScaledVector(t, -t.dot(WORLD_UP));
+      if (axisMode) u.crossVectors(axis, t);
+      else u.copy(WORLD_UP).addScaledVector(t, -t.dot(WORLD_UP));
       if (u.lengthSq() < 0.0025) {
-        // Spine is (nearly) vertical: carry the previous up vector along instead.
+        // Degenerate (spine parallel to the reference): carry the previous up vector along.
         u.copy(prevU).addScaledVector(t, -t.dot(prevU));
       }
       u.normalize();
@@ -75,13 +85,14 @@ export class Ribbon {
     return target.copy(_frame.P).addScaledVector(_frame.U, v);
   }
 
-  bounds(s0, s1, margin = 0) {
+  // Bounding box of the ribbon between s0 and s1, for staff heights vRange = [low, high].
+  bounds(s0, s1, [low, high]) {
     const box = new THREE.Box3();
     const steps = Math.max(32, Math.ceil((s1 - s0) * 2));
     const v = new THREE.Vector3();
     for (let i = 0; i <= steps; i++) {
       const s = s0 + ((s1 - s0) * i) / steps;
-      for (const h of [-margin, margin]) box.expandByPoint(this.pointAt(s, h, v));
+      for (const h of [low, high]) box.expandByPoint(this.pointAt(s, h, v));
     }
     return box;
   }
@@ -100,39 +111,4 @@ function lerp3(arr, i, k, out) {
     arr[a + 1] + (arr[b + 1] - arr[a + 1]) * k,
     arr[a + 2] + (arr[b + 2] - arr[a + 2]) * k,
   );
-}
-
-// Monotone cubic (Fritsch–Carlson) interpolation: smooth, and never overshoots
-// the given values, so a twist from 0° to 180° doesn't wobble past 180°.
-function monotoneCubic(xs, ys) {
-  const n = xs.length;
-  if (n === 1) return () => ys[0];
-  const d = [];
-  for (let i = 0; i < n - 1; i++) d.push((ys[i + 1] - ys[i]) / Math.max(1e-9, xs[i + 1] - xs[i]));
-  const m = [d[0]];
-  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
-  m.push(d[n - 2]);
-  for (let i = 0; i < n - 1; i++) {
-    if (d[i] === 0) { m[i] = 0; m[i + 1] = 0; continue; }
-    const a = m[i] / d[i];
-    const b = m[i + 1] / d[i];
-    const h = a * a + b * b;
-    if (h > 9) {
-      const tau = 3 / Math.sqrt(h);
-      m[i] = tau * a * d[i];
-      m[i + 1] = tau * b * d[i];
-    }
-  }
-  return x => {
-    if (x <= xs[0]) return ys[0];
-    if (x >= xs[n - 1]) return ys[n - 1];
-    let i = 0;
-    while (x > xs[i + 1]) i++;
-    const h = xs[i + 1] - xs[i];
-    const t = (x - xs[i]) / h;
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h * m[i]
-      + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h * m[i + 1];
-  };
 }

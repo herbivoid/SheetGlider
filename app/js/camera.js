@@ -23,17 +23,28 @@ export class FollowCamera {
     return 2 * P.camDistance * Math.tan(THREE.MathUtils.degToRad(P.fov) / 2) * aspect;
   }
 
-  bake({ t0, t1, aspect, ribbon, sEnd, positionAt }) {
+  // vRange: [lowest, highest] staff height (staff spaces) that must stay in view.
+  bake({ t0, t1, aspect, ribbon, sEnd, vRange, positionAt }) {
     const P = this.params;
-    const box = ribbon.bounds(0, sEnd, 3);
+    const box = ribbon.bounds(0, sEnd, vRange);
     this.z0 = (box.min.z + box.max.z) / 2;
     const width = this.frameWidth(aspect);
-    const margin = 2;
+    const margin = 3;
     const xMin = box.min.x - margin;
     const xMax = box.max.x + margin;
-    const fits = xMax - xMin <= width * 0.95;
+    // How wide the ribbon looks from this yaw: at 0° its x extent faces the
+    // camera; at ±90° we look along x and its depth extent faces us instead.
+    const yaw = THREE.MathUtils.degToRad(P.yaw);
+    const across = Math.abs(Math.cos(yaw));
+    const seen = (xMax - xMin) * across + (box.max.z - box.min.z) * Math.abs(Math.sin(yaw));
+    const fits = seen <= width * 0.95;
     this.static = fits;
+    const halfView = (width / 2) * across; // how much x the frame covers either side of center
     const baseY = (box.min.y + box.max.y) / 2;
+    // If the ribbon is taller than the frame, never let the character leave the middle of it.
+    const height = width / aspect;
+    const fitsY = box.max.y - box.min.y <= height * 0.9;
+    const band = height * 0.26;
 
     const n = Math.max(2, Math.ceil((t1 - t0) * RATE) + 1);
     this.t0 = t0;
@@ -42,9 +53,13 @@ export class FollowCamera {
     const pos = new THREE.Vector3();
     const target = t => {
       positionAt(t, pos);
-      let x = fits ? (xMin + xMax) / 2 : pos.x + P.lead * width;
-      if (!fits) x = THREE.MathUtils.clamp(x, xMin + width / 2, xMax - width / 2);
-      const y = baseY + (pos.y - baseY) * P.followY;
+      let x = fits ? (xMin + xMax) / 2 : pos.x + P.lead * width * Math.cos(yaw);
+      if (!fits && xMax - xMin > 2 * halfView) x = THREE.MathUtils.clamp(x, xMin + halfView, xMax - halfView);
+      let y = baseY + (pos.y - baseY) * P.followY;
+      if (!fitsY) {
+        const body = pos.y + P.characterSize * 0.6; // middle of the character, not its feet
+        y = THREE.MathUtils.clamp(y, body - band, body + band);
+      }
       return [x, y];
     };
     const w = Math.PI * 2 * P.camSmooth; // spring frequency (rad/s)
@@ -82,6 +97,7 @@ export class FollowCamera {
       this.z0 + P.camDistance * Math.cos(yaw) * Math.cos(pitch),
     );
     camera.lookAt(look);
+    camera.rotateZ(THREE.MathUtils.degToRad(P.roll));
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
   }

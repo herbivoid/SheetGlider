@@ -9,9 +9,10 @@
   "facing": "right",
   "sprites": {
     "glide": "glide.png",
-    "anticipate": "anticipate.png",
+    "crouch": "crouch.png",
     "hit": "hit.png",
     "ride": "ride.png",
+    "surf": "surf.png",
     "rest": "rest.png"
   }
 }
