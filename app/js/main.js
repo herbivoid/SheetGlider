@@ -67,7 +67,8 @@ function rebuild() {
 }
 
 // mode: "all" (preview, or export with glow baked in), "main" (everything but
-// the glow), "glow" (only the glow, as additive light on opaque black).
+// the glow and sparks), "glow" (only the glow and sparks, as additive light on
+// opaque black).
 function renderAt(time, mode = "all") {
   rig.apply(camera, time);
   world.hero.update(time, camera);
@@ -79,11 +80,13 @@ function renderAt(time, mode = "all") {
     camera.layers.set(GLOW_LAYER);
     renderer.setClearColor(0x000000, 1);
     world.staff.setGlowAdditive(true);
+    world.particles.setAdditive(true);
   }
   renderer.render(scene, camera);
   if (mode === "glow") {
     renderer.setClearColor(0x000000, 0);
     world.staff.setGlowAdditive(false);
+    world.particles.setAdditive(false);
   }
 }
 

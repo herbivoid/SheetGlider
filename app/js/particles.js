@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { makeFrame } from "./ribbon.js";
+import { GLOW_LAYER } from "./staff.js";
 import { rand } from "./util.js";
 
 // Pixel sparks: a small burst on each landing, and a steady trail while
@@ -8,6 +9,9 @@ import { rand } from "./util.js";
 // Nothing is simulated step by step: each particle's birth time, start point
 // and velocity come from a seeded random generator, so its position at any
 // time t is a formula. Scrubbing, preview and export all show the same sparks.
+//
+// Sparks are light, like the hit glow, so they live on the glow layer: when
+// the glow is exported separately they go with it, as additive light.
 
 const MAX = 4000;
 
@@ -26,9 +30,15 @@ export class Particles {
     this.points = new THREE.Points(geo, this.material);
     this.points.frustumCulled = false;
     this.points.renderOrder = 4;
+    this.points.layers.set(GLOW_LAYER);
     this.frame = makeFrame();
     this.landings = hero.landings();
     this.runs = hero.runs;
+  }
+
+  // Normal blending inside the main picture; additive (light on black) for the separate glow layer.
+  setAdditive(additive) {
+    this.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
   }
 
   update(t) {
