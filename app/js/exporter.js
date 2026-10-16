@@ -44,17 +44,18 @@ class UploadPool {
 
   buffer(bytes) { return this.spare.pop() ?? new Uint8Array(bytes); }
 
-  send(url, pixels, width, background) {
+  // straight: convert to straight alpha (false keeps the premultiplied colors).
+  send(url, pixels, width, background, straight) {
     this.inflight++;
     // Absolute URL: workers resolve relative ones against their own script.
     const abs = new URL(url, location.href).href;
-    this.workers[this.next++ % this.workers.length].postMessage({ url: abs, pixels, width, background }, [pixels.buffer]);
+    this.workers[this.next++ % this.workers.length].postMessage({ url: abs, pixels, width, background, straight }, [pixels.buffer]);
   }
 
   close() { this.workers.forEach(w => w.terminate()); }
 }
 
-// layers: [{ suffix, render(t), opaque }] — each becomes its own file.
+// layers: [{ suffix, render(t), opaque, premultiplied }] — each becomes its own file.
 export async function exportVideo({ renderer, width, height, layers, t0, t1, fps, format, name, onProgress, cancelled }) {
   const frames = Math.max(1, Math.round((t1 - t0) * fps));
   const jobs = [];
@@ -73,7 +74,8 @@ export async function exportVideo({ renderer, width, height, layers, t0, t1, fps
         gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
         // Opaque layers (the glow) have black rows where others are transparent.
         const background = layers[l].opaque ? 0xff000000 : 0;
-        pool.send(`/api/export/frame?id=${jobs[l].id}&i=${i}&z=1&bg=${layers[l].opaque ? 1 : 0}`, pixels, width, background);
+        pool.send(`/api/export/frame?id=${jobs[l].id}&i=${i}&z=1&bg=${layers[l].opaque ? 1 : 0}`, pixels, width, background,
+          !layers[l].premultiplied);
       }
       onProgress(i + 1, frames);
     }

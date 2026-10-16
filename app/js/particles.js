@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { makeFrame } from "./ribbon.js";
-import { GLOW_LAYER } from "./staff.js";
+import { GLOW_LAYER, setLightBlending } from "./staff.js";
 import { rand } from "./util.js";
 
 // Pixel sparks: a small burst on each landing, and a steady trail while
@@ -39,9 +39,9 @@ export class Particles {
     this.runs = hero.runs;
   }
 
-  // Normal blending inside the main picture; additive (light on black) for the separate glow layer.
-  setAdditive(additive) {
-    this.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+  // See setLightBlending in staff.js.
+  setLightBlending(mode) {
+    setLightBlending(this.material, mode);
   }
 
   update(t) {

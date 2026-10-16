@@ -5,7 +5,7 @@
 // "Empty" means every pixel equals `background` (0 = transparent, or opaque
 // black for the glow layer); the server puts those rows back.
 
-self.onmessage = async ({ data: { url, pixels, width, background } }) => {
+self.onmessage = async ({ data: { url, pixels, width, background, straight } }) => {
   try {
     const words = new Uint32Array(pixels.buffer, pixels.byteOffset, pixels.byteLength / 4);
     const rows = words.length / width;
@@ -19,7 +19,7 @@ self.onmessage = async ({ data: { url, pixels, width, background } }) => {
     while (y1 > y0 && rowEmpty(y1 - 1)) y1--;
 
     const band = pixels.subarray(y0 * width * 4, y1 * width * 4);
-    unpremultiply(band);
+    if (straight) unpremultiply(band); // a premultiplied export keeps the colors as they are
     const blob = new Blob([band]); // copies the rows
     self.postMessage({ type: "buffer", pixels }, [pixels.buffer]);
     const stream = blob.stream().pipeThrough(new CompressionStream("deflate"));

@@ -159,7 +159,11 @@ export function buildGui(params, actions) {
   exp.add(params, "fps", [24, 25, 30, 50, 60]);
   exp.add(params, "format", { "ProRes 4444 (.mov)": "prores", "WebM VP9 alpha": "webm", "PNG sequence": "png" });
   exp.add(params, "exportAudio").name("also save score audio (.wav)");
-  exp.add(params, "glowLayer").name("glow as separate layer");
+  exp.add(params, "glowExport", {
+    "baked into video (simple)": "baked",
+    "separate glow layer (Add)": "layer",
+    "in video as light (premultiplied, ProRes)": "light",
+  }).name("glow in export");
   exp.add(params, "exportTrack").name("also save character track (.csv)");
   exp.add({ go: actions.exportVideo }, "go").name("⬇ Export video");
 

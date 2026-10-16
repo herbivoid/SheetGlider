@@ -15,6 +15,25 @@ import { DEFAULT_LOUDNESS } from "./score.js";
 
 export const STAFF_GAP = 10; // distance between staff centers (grand staff), in staff spaces
 export const GLOW_LAYER = 1;  // glows render on their own layer, so they can be exported separately
+
+// How light (glows, light-style sparks, tail light) is blended:
+//   "normal":   a semi-transparent tint, like everything else
+//   "additive": light added onto opaque black (the separate glow layer)
+//   "emissive": light added to the color without adding opacity, i.e. light in
+//               a premultiplied-alpha video
+export function setLightBlending(material, mode) {
+  if (mode === "emissive") {
+    material.blending = THREE.CustomBlending;
+    material.blendEquation = THREE.AddEquation;
+    material.blendSrc = THREE.SrcAlphaFactor;
+    material.blendDst = THREE.OneFactor;
+    material.blendEquationAlpha = THREE.AddEquation;
+    material.blendSrcAlpha = THREE.ZeroFactor;
+    material.blendDstAlpha = THREE.OneFactor;
+  } else {
+    material.blending = mode === "additive" ? THREE.AdditiveBlending : THREE.NormalBlending;
+  }
+}
 const QUAD = new THREE.PlaneGeometry(1, 1);
 const SLAB_DEPTH = 0.06;
 
@@ -252,11 +271,10 @@ export class StaffView {
     this.visuals.set(vis.key, visual);
   }
 
-  // Normal blending inside the main picture; additive (light on black) for the separate glow layer.
-  setGlowAdditive(additive) {
-    const blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
-    for (const vis of this.visuals.values()) if (vis.glow) vis.glow.material.blending = blending;
-    if (this.tailMats?.lit) this.tailMats.lit.blending = blending;
+  // See setLightBlending: "normal" in the preview, other modes while exporting light.
+  setLightBlending(mode) {
+    for (const vis of this.visuals.values()) if (vis.glow) setLightBlending(vis.glow.material, mode);
+    if (this.tailMats?.lit) setLightBlending(this.tailMats.lit, mode);
   }
 
   // Adds a glyph quad at (s, v). `tint` makes it follow a note's color (flash when played).
