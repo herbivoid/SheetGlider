@@ -44,7 +44,7 @@ The notation also shapes the animation. **Dynamics affect motion** sets how much
 - staccato notes get a quick touch instead of a ride
 - a fermata always gets the celebration
 
-**Duration tails** (also under Notation) are soft bars behind long notes (half notes and longer by default) showing how long they last. They light up as the character rides along them.
+**Duration tails** (also under Notation) mark how long long notes last (half notes and longer by default). The character lights them up as he rides along. By default only that light shows; raise *tail bar opacity* to also see the bar ahead of time.
 
 Examples in `examples/`:
 - `piano-example.musicxml`: a short grand-staff piece
@@ -63,9 +63,9 @@ With **also save score audio** on, a `.wav` of the preview synth is saved next t
 
 **Glow as separate layer:** exports two files, the video without glow, and `…_glow` with only the hit glow (and the sparks, in *light* spark style), as light on black. In your editor, put the glow file on the track above the main video and set its composite/blend mode to **Add** (or **Screen**). That makes it brighten the footage like real light, instead of sitting on top as a semi-transparent smudge. In DaVinci Resolve, the setting is **Composite Mode** in the Inspector. Left on *Normal*, the glow layer would cover everything with black.
 
-**Spark style** (under Look):
-- *light*: sparks are glowing light on the glow layer. Best over darker footage. Added light can only brighten, so over very bright footage they turn white.
-- *paint*: solid pixels in the main video that blink out at the end. They keep their color over any footage, so use this one for bright scenes.
+**Spark & tail style** (under Look) decides how sparks and the light along duration tails are drawn:
+- *light*: glowing light on the glow layer. Best over darker footage. Added light can only brighten, so over very bright footage it turns white.
+- *paint*: drawn in the main video, so it keeps its color over any footage. Sparks become solid pixels that blink out; tail light fades out smoothly. Use this one for bright scenes.
 
 **Character track** (*also save character track*, off by default): a `…_track.csv` next to the video with the character's on-screen position on every frame. Columns:
 - center `x`, `y` and `feet_x`, `feet_y`, in pixels from the top-left of the video
