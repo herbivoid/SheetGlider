@@ -133,7 +133,11 @@ export class StaffView {
       this.tube(t.s0, t.s1, t.v0, t.v1, t.r, material);
     }
     for (const b of layout.bands) this.slab(b);
-    for (const t of layout.tails) this.slab(t, this.tailMaterial());
+    this.litTails = [];
+    for (const t of layout.tails) {
+      this.slab(t, this.tailMaterial("base"));
+      this.litTails.push(this.slab(t, this.tailMaterial("lit")));
+    }
 
     for (const rest of score.rests) {
       let s = sOf(rest.start);
@@ -174,17 +178,26 @@ export class StaffView {
     });
   }
 
-  // Duration tails share one material: lit up behind the character, dim ahead of it.
-  tailMaterial() {
-    if (this.tailMat) return this.tailMat;
+  // Duration tails are drawn twice, sharing their uniforms:
+  //   "base": the bar itself (note color, played color once passed), at the tail
+  //           opacity (0 by default, so invisible). Main picture.
+  //   "lit":  the glow behind the character, fading out over ~8 spaces. On the
+  //           glow layer or in the main picture, following the spark style.
+  tailMaterial(mode) {
+    this.tailMats ??= {};
+    if (this.tailMats[mode]) return this.tailMats[mode];
     const P = this.params;
-    this.tailUniforms = {
+    this.tailUniforms ??= {
       uNow: { value: -1e9 },
       uLit: { value: new THREE.Color(P.glowColor) },
       uPlayed: { value: new THREE.Color(P.playedColor) },
       uAlpha: { value: P.tailOpacity },
     };
+    const look = mode === "lit"
+      ? "vec4 diffuseColor = vec4(uLit, past > 0.0 ? 0.9 * clamp(1.0 - past / 8.0, 0.0, 1.0) : 0.0);"
+      : "vec4 diffuseColor = vec4(past > 0.0 ? uPlayed : diffuse, uAlpha);";
     const m = new THREE.MeshBasicMaterial({ color: P.noteColor, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+    m.customProgramCacheKey = () => `sheetglider-tail-${mode}`;
     m.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, this.tailUniforms);
       shader.vertexShader = shader.vertexShader
@@ -192,15 +205,9 @@ export class StaffView {
         .replace("#include <begin_vertex>", "#include <begin_vertex>\nvS = aS;");
       shader.fragmentShader = shader.fragmentShader
         .replace("#include <common>", "#include <common>\nvarying float vS;\nuniform float uNow;\nuniform vec3 uLit;\nuniform vec3 uPlayed;\nuniform float uAlpha;")
-        .replace("vec4 diffuseColor = vec4( diffuse, opacity );", `
-          // Behind the character: bright glow fading to the played color over ~8 spaces.
-          float past = uNow - vS;
-          float lit = past > 0.0 ? clamp(1.0 - past / 8.0, 0.0, 1.0) : 0.0;
-          vec3 tailColor = past > 0.0 ? mix(uPlayed, uLit, lit) : diffuse;
-          float tailAlpha = past > 0.0 ? mix(uAlpha * 1.3, 0.9, lit) : uAlpha;
-          vec4 diffuseColor = vec4(tailColor, tailAlpha);`);
+        .replace("vec4 diffuseColor = vec4( diffuse, opacity );", `float past = uNow - vS; // > 0: the character has passed here\n${look}`);
     };
-    this.tailMat = m;
+    this.tailMats[mode] = m;
     return m;
   }
 
@@ -247,9 +254,9 @@ export class StaffView {
 
   // Normal blending inside the main picture; additive (light on black) for the separate glow layer.
   setGlowAdditive(additive) {
-    for (const vis of this.visuals.values()) {
-      if (vis.glow) vis.glow.material.blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
-    }
+    const blending = additive ? THREE.AdditiveBlending : THREE.NormalBlending;
+    for (const vis of this.visuals.values()) if (vis.glow) vis.glow.material.blending = blending;
+    if (this.tailMats?.lit) this.tailMats.lit.blending = blending;
   }
 
   // Adds a glyph quad at (s, v). `tint` makes it follow a note's color (flash when played).
@@ -324,7 +331,9 @@ export class StaffView {
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     geo.setAttribute("aS", new THREE.Float32BufferAttribute(along, 1));
     geo.setIndex(index);
-    this.group.add(new THREE.Mesh(geo, material));
+    const mesh = new THREE.Mesh(geo, material);
+    this.group.add(mesh);
+    return mesh;
   }
 
   update(t, camera) {
@@ -358,7 +367,10 @@ export class StaffView {
       const vis = this.visuals.get(tint);
       if (vis) material.color.copy(vis.color);
     }
-    // Duration tails light up up to where the character is now.
+    // Duration tails light up up to where the character is now. Their light follows
+    // the spark style: glow layer ("light"), or solid in the main picture ("paint").
+    const tailLayer = params.sparkStyle === "paint" ? 0 : GLOW_LAYER;
+    for (const mesh of this.litTails) mesh.layers.set(tailLayer);
     if (this.tailUniforms) {
       this.tailUniforms.uNow.value = this.sOf(this.score.beatAt(t));
       this.tailUniforms.uLit.value.set(params.glowColor);

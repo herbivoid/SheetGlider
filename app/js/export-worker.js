@@ -1,5 +1,6 @@
 // Export helper running off the main thread: trims empty rows off one frame,
-// compresses the rest and uploads it, then hands the pixel buffer back for reuse.
+// converts it to straight alpha, compresses the rest and uploads it, then
+// hands the pixel buffer back for reuse.
 //
 // "Empty" means every pixel equals `background` (0 = transparent, or opaque
 // black for the glow layer); the server puts those rows back.
@@ -17,7 +18,9 @@ self.onmessage = async ({ data: { url, pixels, width, background } }) => {
     let y1 = rows;
     while (y1 > y0 && rowEmpty(y1 - 1)) y1--;
 
-    const blob = new Blob([pixels.subarray(y0 * width * 4, y1 * width * 4)]); // copies the rows
+    const band = pixels.subarray(y0 * width * 4, y1 * width * 4);
+    unpremultiply(band);
+    const blob = new Blob([band]); // copies the rows
     self.postMessage({ type: "buffer", pixels }, [pixels.buffer]);
     const stream = blob.stream().pipeThrough(new CompressionStream("deflate"));
     const body = await new Response(stream).arrayBuffer();
@@ -30,3 +33,18 @@ self.onmessage = async ({ data: { url, pixels, width, background } }) => {
     self.postMessage({ type: "done", error: String(err.message || err) });
   }
 };
+
+// WebGL hands back premultiplied colors (already scaled down by their alpha);
+// video files and editors expect straight alpha. Without this, everything
+// semi-transparent (soft edges, glows, fog, fades) looks too dark over footage.
+function unpremultiply(p) {
+  const out = new Uint8ClampedArray(p.buffer, p.byteOffset, p.byteLength);
+  for (let i = 0; i < out.length; i += 4) {
+    const a = out[i + 3];
+    if (a === 0 || a === 255) continue;
+    const k = 255 / a;
+    out[i] = out[i] * k + 0.5;
+    out[i + 1] = out[i + 1] * k + 0.5;
+    out[i + 2] = out[i + 2] * k + 0.5;
+  }
+}

@@ -33,9 +33,9 @@ FORMATS = {
     "png": {"ext": "", "args": ["-pix_fmt", "rgba", "-f", "image2"]},  # PNG sequence in a folder
 }
 
-# Frames arrive as raw RGBA straight from WebGL: bottom-up rows and premultiplied
-# alpha. Flip them and convert to straight alpha, which video editors expect.
-INPUT_FILTER = "vflip,format=gbrap,unpremultiply=inplace=1"
+# Frames arrive as raw RGBA from WebGL, rows bottom-up, already converted to
+# straight alpha by the browser (export-worker.js). Just flip them.
+INPUT_FILTER = "vflip"
 
 MIME = {
     ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",

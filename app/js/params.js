@@ -29,7 +29,7 @@ export const params = {
   lyricsSize: 1,
   tails: true,          // duration tails on long notes
   tailMin: 2,           // beats (quarter notes): half notes and longer get a tail
-  tailOpacity: 0.3,
+  tailOpacity: 0,       // the bar itself; 0 = only its light shows, once the character reaches it
   // Depth fog: things fade out with distance (multiples of the camera distance)
   fog: false,
   fogStart: 1.15,
