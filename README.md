@@ -153,6 +153,12 @@ A *look* is all your visual settings: shape, tweaks, colors, motion, camera, cha
 
 ## Credits
 
+Clawd is Anthropic's mascot. SheetGlider is a fan project, not affiliated with or endorsed by Anthropic. The pixel-art Clawd sprites here are a fan rendition.
+
 Music fonts, all under the SIL Open Font License (license files in `app/fonts/`):
 - [Bravura](https://github.com/steinbergmedia/bravura) and [Petaluma](https://github.com/steinbergmedia/petaluma) by Steinberg
 - [Leland](https://github.com/musescore/MuseScore/tree/main/fonts/leland) by MuseScore
+
+## License
+
+The code is released under the [MIT License](LICENSE). The bundled music fonts keep their own license, the SIL Open Font License.
