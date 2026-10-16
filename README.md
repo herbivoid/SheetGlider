@@ -55,7 +55,7 @@ Examples in `examples/`:
 
 | Format | Use it for |
 |---|---|
-| **ProRes 4444 (.mov)** | Video editors (DaVinci Resolve, Premiere, Final Cut). Large files, best compatibility. |
+| **ProRes 4444 (.mov)** | Video editing software. Large files, best compatibility. |
 | WebM VP9 with alpha | Web, OBS, browsers. Small files, slow to encode. |
 | PNG sequence | Fallback that every editor can import. |
 
@@ -66,7 +66,7 @@ With **also save score audio** on, a `.wav` of the preview synth is saved next t
 | Option | Files | How it looks | In your editor |
 |---|---|---|---|
 | **Baked into video** (default) | 1 | A semi-transparent tint. Keeps its color over bright footage, but doesn't brighten anything. | Nothing to set. |
-| **Separate glow layer** | 2 | Real light that brightens the footage. About 1.7× slower to export. | Put `…_glow` on the track above and set its composite/blend mode to **Add** (or **Screen**). In Resolve, that's **Composite Mode** in the Inspector. |
+| **Separate glow layer** | 2 | Real light that brightens the footage. About 1.7× slower to export. | Put `…_glow` on the track above and set its composite/blend mode to **Add** (or **Screen**). |
 
 Real light can only brighten, so over very bright footage it turns white. For bright scenes, prefer the baked option or *paint* style.
 
@@ -82,7 +82,7 @@ Real light can only brighten, so over very bright footage it turns white. For br
 
 Use it to attach effects that follow the character. Your editor may need a script or plugin to import it.
 
-**DaVinci Resolve:** if the background shows black instead of transparent, right-click the clip in the Media Pool, choose **Clip Attributes…**, and set **Alpha Mode** to *Straight*.
+**If your editor shows a black background** instead of transparency, look in the clip's properties for how it reads the alpha channel and set it to *Straight* (not *Premultiplied*).
 
 ## Depth fog
 

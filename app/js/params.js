@@ -88,7 +88,7 @@ export const params = {
   //   "baked": in the video, as a semi-transparent tint (works everywhere)
   //   "layer": a separate _glow file of light on black (editor blend mode: Add)
   // (Light inside the same file via premultiplied alpha was tried and dropped:
-  // editors like Resolve un-premultiply clips internally, which discards it.)
+  // most video editors un-premultiply clips internally, which discards it.)
   glowExport: "baked",
   exportTrack: false, // also save the character's on-screen position per frame (.csv)
 };
