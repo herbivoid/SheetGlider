@@ -162,7 +162,6 @@ export function buildGui(params, actions) {
   exp.add(params, "glowExport", {
     "baked into video (simple)": "baked",
     "separate glow layer (Add)": "layer",
-    "in video as light (premultiplied, ProRes)": "light",
   }).name("glow in export");
   exp.add(params, "exportTrack").name("also save character track (.csv)");
   exp.add({ go: actions.exportVideo }, "go").name("⬇ Export video");

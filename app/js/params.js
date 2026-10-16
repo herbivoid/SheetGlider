@@ -87,8 +87,8 @@ export const params = {
   // How glows, light-style sparks and tail light are exported:
   //   "baked": in the video, as a semi-transparent tint (works everywhere)
   //   "layer": a separate _glow file of light on black (editor blend mode: Add)
-  //   "light": in the video, as light, using premultiplied alpha (ProRes only;
-  //            editor must treat the clip as premultiplied)
+  // (Light inside the same file via premultiplied alpha was tried and dropped:
+  // editors like Resolve un-premultiply clips internally, which discards it.)
   glowExport: "baked",
   exportTrack: false, // also save the character's on-screen position per frame (.csv)
 };

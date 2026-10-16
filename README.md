@@ -67,11 +67,8 @@ With **also save score audio** on, a `.wav` of the preview synth is saved next t
 |---|---|---|---|
 | **Baked into video** (default) | 1 | A semi-transparent tint. Keeps its color over bright footage, but doesn't brighten anything. | Nothing to set. |
 | **Separate glow layer** | 2 | Real light that brightens the footage. About 1.7× slower to export. | Put `…_glow` on the track above and set its composite/blend mode to **Add** (or **Screen**). In Resolve, that's **Composite Mode** in the Inspector. |
-| **In video as light** (ProRes only) | 1 | The same real light as the separate layer, in one file, at single-file speed. | Treat the clip as premultiplied. In Resolve: right-click the clip in the Media Pool → **Clip Attributes…** → **Alpha Mode: Premultiplied**. In Premiere: Interpret Footage → Premultiplied. |
 
 Real light can only brighten, so over very bright footage it turns white. For bright scenes, prefer the baked option or *paint* style.
-
-With **in video as light**, the clip *must* be set to premultiplied, or the light disappears and soft edges look wrong. Every other export uses straight alpha, which is what Resolve normally assumes.
 
 **Spark & tail style** (under Look) decides how sparks and the light along duration tails are drawn:
 - *light*: drawn as light, exported according to **glow in export**. Best over darker footage.
@@ -85,7 +82,7 @@ With **in video as light**, the clip *must* be set to premultiplied, or the ligh
 
 Use it to attach effects that follow the character. Your editor may need a script or plugin to import it.
 
-**DaVinci Resolve:** if the background shows black instead of transparent, right-click the clip in the Media Pool, choose **Clip Attributes…**, and set **Alpha Mode** to *Straight*. Use *Premultiplied* instead for *in video as light* exports.
+**DaVinci Resolve:** if the background shows black instead of transparent, right-click the clip in the Media Pool, choose **Clip Attributes…**, and set **Alpha Mode** to *Straight*.
 
 ## Depth fog
 

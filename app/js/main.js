@@ -74,7 +74,6 @@ function rebuild() {
 //   "all"   everything, light blended like the rest (preview; export with glow baked in)
 //   "main"  everything but the light (glows, light-style sparks, tail light)
 //   "glow"  only the light, added onto opaque black (separate glow layer)
-//   "light" everything, with the light added as emissive light (premultiplied export)
 function renderAt(time, mode = "all") {
   rig.apply(camera, time);
   world.hero.update(time, camera);
@@ -93,15 +92,6 @@ function renderAt(time, mode = "all") {
   renderer.render(scene, camera);
   if (mode === "glow") {
     renderer.setClearColor(0x000000, 0);
-    setLight("normal");
-  }
-  if (mode === "light") {
-    // Second pass on top of the first: add the light without making anything more opaque.
-    camera.layers.set(GLOW_LAYER);
-    setLight("emissive");
-    renderer.autoClear = false;
-    renderer.render(scene, camera);
-    renderer.autoClear = true;
     setLight("normal");
   }
 }
@@ -261,17 +251,9 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
     track.push([Math.round((tt - from) * params.fps), (tt - from).toFixed(4), f(p.x), f(p.y),
       f(p.feetX), f(p.feetY), f(p.height), f(p.rotation), p.visible ? 1 : 0].join(","));
   };
-  // Light in a premultiplied video only works where the format and editor support it: ProRes.
-  let glowExport = params.glowExport;
-  if (glowExport === "light" && params.format !== "prores") {
-    notify("“Glow as light” needs ProRes; this export bakes the glow into the video instead.", true);
-    glowExport = "baked";
-  }
-  const layers = {
-    baked: [{ suffix: "", render: renderMain("all") }],
-    layer: [{ suffix: "", render: renderMain("main") }, { suffix: "_glow", render: tt => renderAt(tt, "glow"), opaque: true }],
-    light: [{ suffix: "", render: renderMain("light"), premultiplied: true }],
-  }[glowExport];
+  const layers = params.glowExport === "layer"
+    ? [{ suffix: "", render: renderMain("main") }, { suffix: "_glow", render: tt => renderAt(tt, "glow"), opaque: true }]
+    : [{ suffix: "", render: renderMain("all") }];
   let results = null;
   try {
     results = await exportVideo({

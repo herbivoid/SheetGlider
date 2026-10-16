@@ -19,20 +19,8 @@ export const GLOW_LAYER = 1;  // glows render on their own layer, so they can be
 // How light (glows, light-style sparks, tail light) is blended:
 //   "normal":   a semi-transparent tint, like everything else
 //   "additive": light added onto opaque black (the separate glow layer)
-//   "emissive": light added to the color without adding opacity, i.e. light in
-//               a premultiplied-alpha video
 export function setLightBlending(material, mode) {
-  if (mode === "emissive") {
-    material.blending = THREE.CustomBlending;
-    material.blendEquation = THREE.AddEquation;
-    material.blendSrc = THREE.SrcAlphaFactor;
-    material.blendDst = THREE.OneFactor;
-    material.blendEquationAlpha = THREE.AddEquation;
-    material.blendSrcAlpha = THREE.ZeroFactor;
-    material.blendDstAlpha = THREE.OneFactor;
-  } else {
-    material.blending = mode === "additive" ? THREE.AdditiveBlending : THREE.NormalBlending;
-  }
+  material.blending = mode === "additive" ? THREE.AdditiveBlending : THREE.NormalBlending;
 }
 const QUAD = new THREE.PlaneGeometry(1, 1);
 const SLAB_DEPTH = 0.06;
