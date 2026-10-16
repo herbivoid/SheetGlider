@@ -13,6 +13,8 @@ from pathlib import Path
 CLEFS = {("G", 2): "treble", ("F", 4): "bass", ("C", 3): "alto", ("C", 4): "tenor"}
 TYPES = {"breve": "whole", "whole": "whole", "half": "half", "quarter": "quarter",
          "eighth": "eighth", "16th": "16th", "32nd": "32nd", "64th": "32nd"}
+ARTICULATIONS = {"Staccato": "staccato", "Staccatissimo": "staccatissimo", "Accent": "accent",
+                 "StrongAccent": "marcato", "Tenuto": "tenuto"}
 
 
 def parse_file(path, expand_repeats=True):
@@ -40,22 +42,45 @@ def parse_file(path, expand_repeats=True):
         except Exception as exc:  # unusual repeat structures: fall back to the written order
             warnings.append(f"Couldn't expand repeats ({exc}); playing them as written.")
 
+    # Repeat signs and 1st/2nd endings only mean something when playing as written.
+    written = order == list(range(len(staff_measures[0])))
     slurs = [(sl.getFirst(), sl.getLast()) for sl in score.spannerBundle.getByClass("Slur")]
+    wedges = [("crescendo" if type(w).__name__ == "Crescendo" else "diminuendo", w.getFirst(), w.getLast())
+              for w in score.spannerBundle.getByClass("DynamicWedge")]
     out = {"notes": [], "rests": [], "graces": [], "slurs": [], "tuplets": [], "bars": [],
-           "keyChanges": [], "timeChanges": [], "clefChanges": [], "tempo": []}
+           "keyChanges": [], "timeChanges": [], "clefChanges": [], "tempo": [],
+           "dynamics": [], "wedges": [], "repeats": [], "voltas": []}
     ids = count()
-    latest = {}  # id(music21 element) -> element id of its most recent copy
+    latest = {}  # id(music21 element) -> element id of its most recent copy (+ its timing)
+    measure_start = {}
     offset = 0.0
     for mi in order:
+        measure_start[mi] = offset
         for staff, measures in enumerate(staff_measures):
             if mi < len(measures):
-                read_measure(measures[mi], staff, offset, out, ids, latest, staff == 0)
-        # Slurs whose last note was just written, and whose first note has been.
+                read_measure(measures[mi], staff, offset, out, ids, latest, staff == 0, written)
+        # Slurs and hairpins whose last note was just written, and whose first note has been.
+        just_written = lambda el: latest.get(("pass", id(el))) == offset
         for first, last in slurs:
-            if id(last) in latest and id(first) in latest and latest.get(("pass", id(last))) == offset:
+            if id(last) in latest and id(first) in latest and just_written(last):
                 out["slurs"].append({"from": latest[id(first)], "to": latest[id(last)]})
+        for kind, first, last in wedges:
+            if ("beat", id(first)) in latest and ("beat", id(last)) in latest and just_written(last):
+                start, _, staff = latest[("beat", id(first))]
+                last_start, last_dur, _ = latest[("beat", id(last))]
+                out["wedges"].append({"type": kind, "staff": staff, "start": start,
+                                      "end": max(last_start + last_dur, start + 0.5)})
         offset += float(staff_measures[0][mi].duration.quarterLength)
         out["bars"].append(round(offset, 6))
+
+    if written:
+        index = {id(m): i for i, m in enumerate(staff_measures[0])}
+        for rb in score.spannerBundle.getByClass("RepeatBracket"):
+            spanned = [index[id(m)] for m in rb.getSpannedElements() if id(m) in index]
+            if spanned:
+                first, last = min(spanned), max(spanned)
+                end = measure_start[last] + float(staff_measures[0][last].duration.quarterLength)
+                out["voltas"].append({"start": measure_start[first], "end": round(end, 6), "label": f"{rb.number}."})
 
     if not out["tempo"]:
         out["tempo"].append({"beat": 0.0, "bpm": 120.0})
@@ -98,8 +123,23 @@ def play_order(part, measures):
     return [index_by_number[m.number] for m in expanded.getElementsByClass("Measure")]
 
 
-def read_measure(m, staff, offset, out, ids, latest, is_first_staff):
+def read_measure(m, staff, offset, out, ids, latest, is_first_staff, written):
+    from music21 import bar
+
     rel = lambda el: round(offset + float(el.getOffsetInHierarchy(m)), 6)
+    measure_len = float(m.duration.quarterLength)
+
+    if written and is_first_staff:
+        if isinstance(m.leftBarline, bar.Repeat) and m.leftBarline.direction == "start":
+            out["repeats"].append({"beat": offset, "dir": "start"})
+        if isinstance(m.rightBarline, bar.Repeat) and m.rightBarline.direction == "end":
+            out["repeats"].append({"beat": round(offset + measure_len, 6), "dir": "end"})
+    for d in m.recurse().getElementsByClass("Dynamic"):
+        out["dynamics"].append({"staff": staff, "beat": rel(d), "value": str(d.value)})
+    # Hairpins can start/stop on an invisible anchor instead of a note.
+    for a in m.recurse().getElementsByClass("SpannerAnchor"):
+        latest[("pass", id(a))] = offset
+        latest[("beat", id(a))] = (rel(a), 0.0, staff)
 
     for c in m.recurse().getElementsByClass("Clef"):
         out["clefChanges"].append({"staff": staff, "beat": rel(c), "clef": clef_name(c)})
@@ -117,9 +157,10 @@ def read_measure(m, staff, offset, out, ids, latest, is_first_staff):
     for el in m.recurse().notes:
         voice = el.activeSite.id if type(el.activeSite).__name__ == "Voice" else "1"
         eid = next(ids)
+        start = rel(el)
         latest[id(el)] = eid
         latest[("pass", id(el))] = offset
-        start = rel(el)
+        latest[("beat", id(el))] = (start, float(el.quarterLength), staff)
         members = el.notes if el.isChord else [el]
         if el.duration.isGrace:
             for member in members:
@@ -133,7 +174,11 @@ def read_measure(m, staff, offset, out, ids, latest, is_first_staff):
         stem = el.stemDirection if el.stemDirection in ("up", "down") else None
         beams = [b.type if b.type != "partial" else f"partial-{b.direction or 'right'}"
                  for b in el.beams.beamsList]
-        for member in members:
+        artic = [ARTICULATIONS[type(a).__name__] for a in el.articulations if type(a).__name__ in ARTICULATIONS]
+        fermata = any(type(x).__name__ == "Fermata" for x in el.expressions)
+        lyrics = [{"text": ly.text, "syllabic": ly.syllabic or "single", "verse": int(ly.number or 1)}
+                  for ly in el.lyrics if ly.text]
+        for i, member in enumerate(members):
             tie = member.tie or (el.tie if el.isChord else None)
             tie_type = tie.type if tie else None
             out["notes"].append({
@@ -145,9 +190,10 @@ def read_measure(m, staff, offset, out, ids, latest, is_first_staff):
                 "tieStart": tie_type in ("start", "continue"),
                 "tieStop": tie_type in ("stop", "continue"),
                 "stem": stem, "beams": beams, "tuplet": group,
+                "artic": artic, "fermata": fermata,
+                "lyrics": lyrics if i == 0 else [],  # one set per chord
             })
 
-    measure_len = float(m.duration.quarterLength)
     for r in m.recurse().getElementsByClass("Rest"):
         if r.style.hideObjectOnPrint or r.quarterLength <= 0:
             continue

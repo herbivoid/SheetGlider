@@ -14,7 +14,7 @@ python -m pip install music21
 python run.py
 ```
 
-This opens `http://127.0.0.1:8765/app/` in your browser. Settings are in the panel on the right; **Export video** is at the bottom. Exports go to `output/`.
+This opens `http://127.0.0.1:8765/app/` in your browser. If that port is busy (say, SheetGlider is already running), it uses the next free one and says so. Settings and custom characters are remembered per address, so a different port starts fresh. Settings are in the panel on the right; **Export video** is at the bottom. Exports go to `output/`.
 
 ## Music input
 
@@ -22,8 +22,8 @@ Load a **MusicXML** file (`.musicxml`, `.xml`, or compressed `.mxl`) with **Load
 
 - One instrument is used: a single staff, or both staves of a piano part.
 - The tempo comes from the file's metronome marks (tempo changes included). The **tempo** setting scales it.
-- **Clawd follows** picks the top staff, the bottom staff, or the highest note.
-- **Play repeats** (on by default) plays repeats and 1st/2nd endings as performed. Turn it off to play straight through as written.
+- **Character follows** picks the top staff, the bottom staff, or the highest note.
+- **Play repeats** (on by default) plays repeats and 1st/2nd endings as performed. Turn it off to play straight through as written; repeat signs and ending brackets are drawn then.
 
 Notation drawn:
 - notes, chords (seconds offset, accidentals stacked) and rests
@@ -31,12 +31,25 @@ Notation drawn:
 - ties, slurs, and tuplet numbers and brackets
 - grace notes (shown small, played just before their main note)
 - clef, key and time signature changes
+- dynamics (p…ff, sfz…) and crescendo/diminuendo hairpins
+- articulations (staccato, staccatissimo, accent, tenuto, marcato) and fermatas
+- lyrics (all verses), with hyphens, lighting up as they're sung
+- repeat signs and 1st/2nd endings
 
-Not drawn yet: dynamics, articulations, lyrics, repeat signs.
+Each of these can be switched off under **Notation**. Not drawn: text expressions (like *dolce*), pedal marks.
+
+The notation also shapes the animation. **Dynamics affect motion** sets how much:
+- louder notes glow bigger, throw more sparks and get higher hops
+- accents hit harder
+- staccato notes get a quick touch instead of a ride
+- a fermata always gets the celebration
+
+**Duration tails** (also under Notation) are soft bars behind long notes (half notes and longer by default) showing how long they last. They light up as the character rides along them.
 
 Examples in `examples/`:
 - `piano-example.musicxml`: a short grand-staff piece
-- `notation-test.musicxml`: exercises all of the notation above
+- `notation-test.musicxml`: exercises beams, ties, slurs, tuplets, grace notes, chords and clef/key/time changes
+- `expressive-test.musicxml`: Twinkle Twinkle with lyrics, dynamics, articulations and 1st/2nd endings
 
 ## Output formats
 
@@ -54,7 +67,19 @@ With **also save score audio** on, a `.wav` of the preview synth is saved next t
 - *light*: sparks are glowing light on the glow layer. Best over darker footage. Added light can only brighten, so over very bright footage they turn white.
 - *paint*: solid pixels in the main video that blink out at the end. They keep their color over any footage, so use this one for bright scenes.
 
+**Character track** (*also save character track*, off by default): a `…_track.csv` next to the video with the character's on-screen position on every frame. Columns:
+- center `x`, `y` and `feet_x`, `feet_y`, in pixels from the top-left of the video
+- `height_px`
+- `rotation_deg` (0 = upright)
+- `visible`
+
+Use it to attach effects that follow the character. Your editor may need a script or plugin to import it.
+
 **DaVinci Resolve:** if the background shows black instead of transparent, right-click the clip in the Media Pool, choose **Clip Attributes…**, and set **Alpha Mode** to *Straight*.
+
+## Depth fog
+
+**Depth fog → fade with distance** makes far-away parts of the scene fade out, into transparency rather than into a color, so it still composites cleanly. It's good with shapes that travel into the distance, like approach, fly-in and fly-away. Fading starts and finishes at multiples of the camera distance, so it keeps working when you zoom.
 
 ## Ribbon shapes
 

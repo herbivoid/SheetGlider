@@ -63,6 +63,22 @@ export function buildGui(params, actions) {
   look.add(params, "sparkBrightness", 0.1, 1, 0.01).name("spark brightness");
   look.close();
 
+  const notation = gui.addFolder("Notation");
+  notation.add(params, "showDynamics").name("dynamics & hairpins").onChange(re);
+  notation.add(params, "showArticulations").name("articulations & fermatas").onChange(re);
+  notation.add(params, "showLyrics").name("lyrics").onChange(re);
+  notation.add(params, "lyricsSize", 0.5, 2.5, 0.05).name("lyrics size").onFinishChange(re);
+  notation.add(params, "tails").name("duration tails").onChange(re);
+  notation.add(params, "tailMin", 0.5, 8, 0.25).name("tails on notes ≥ (beats)").onFinishChange(re);
+  notation.add(params, "tailOpacity", 0.05, 1, 0.01).name("tail opacity");
+  notation.close();
+
+  const fog = gui.addFolder("Depth fog");
+  fog.add(params, "fog").name("fade with distance").onChange(re);
+  fog.add(params, "fogStart", 0.5, 5, 0.05).name("starts at (× camera dist.)").onFinishChange(re);
+  fog.add(params, "fogEnd", 0.6, 8, 0.05).name("gone at (× camera dist.)").onFinishChange(re);
+  fog.close();
+
   const ribbon = gui.addFolder("Ribbon");
   ribbon.add(params, "preset", Object.keys(RIBBON_PRESETS)).name("shape").onChange(re);
   ribbon.add(params, "readability", 0, 1, 0.01).name("edge-on readability");
@@ -106,6 +122,7 @@ export function buildGui(params, actions) {
   motion.add(params, "fastNote", 0.05, 0.6, 0.01).name("fast note < (s)").onFinishChange(re);
   motion.add(params, "minRunNotes", 2, 12, 1).name("notes to make a run").onFinishChange(re);
   motion.add(params, "surfLean", -0.5, 0.8, 0.01).name("surf lean");
+  motion.add(params, "dynamicsEffect", 0, 1.5, 0.05).name("dynamics affect motion").onFinishChange(re);
   motion.add(params, "ghosts", ["off", "same staff", "all staves"]).name("chord clones").onChange(re);
   motion.add(params, "maxGhosts", 1, 8, 1).name("max clones per chord").onFinishChange(re);
   motion.add(params, "ghostOpacity", 0.1, 1, 0.05).name("clone opacity");
@@ -143,6 +160,7 @@ export function buildGui(params, actions) {
   exp.add(params, "format", { "ProRes 4444 (.mov)": "prores", "WebM VP9 alpha": "webm", "PNG sequence": "png" });
   exp.add(params, "exportAudio").name("also save score audio (.wav)");
   exp.add(params, "glowLayer").name("glow as separate layer");
+  exp.add(params, "exportTrack").name("also save character track (.csv)");
   exp.add({ go: actions.exportVideo }, "go").name("⬇ Export video");
 
   return {

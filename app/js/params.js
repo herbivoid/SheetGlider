@@ -22,6 +22,18 @@ export const params = {
   sparkStyle: "light",  // "light" (glow layer, additive) or "paint" (solid, in the main video)
   sparkWhiteness: 0.15, // how far sparks may be mixed toward white (0 = all glow color)
   sparkBrightness: 1,   // light style only
+  // Notation
+  showDynamics: true,
+  showArticulations: true,
+  showLyrics: true,
+  lyricsSize: 1,
+  tails: true,          // duration tails on long notes
+  tailMin: 2,           // beats (quarter notes): half notes and longer get a tail
+  tailOpacity: 0.3,
+  // Depth fog: things fade out with distance (multiples of the camera distance)
+  fog: false,
+  fogStart: 1.15,
+  fogEnd: 2.6,
   // Spacing
   quarterWidth: 4.5,
   spacingExponent: 0.65,
@@ -47,6 +59,7 @@ export const params = {
   fastNote: 0.22,     // seconds: notes closer together than this count as fast
   minRunNotes: 3,     // this many fast notes in a row make a run (surfed, not hopped)
   surfLean: 0.12,
+  dynamicsEffect: 0.6,  // how much louder notes glow/hop/spark more (0 = ignore dynamics)
   ghosts: "same staff", // chord clones: "off", "same staff", "all staves"
   ghostOpacity: 0.7,
   maxGhosts: 4,
@@ -72,6 +85,7 @@ export const params = {
   format: "prores",
   exportAudio: true,
   glowLayer: false,   // export the glow as its own file (for an "Add" blend in the editor)
+  exportTrack: false, // also save the character's on-screen position per frame (.csv)
 };
 
 export const DEFAULTS = Object.freeze({ ...params });

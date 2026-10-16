@@ -8,7 +8,7 @@
 const NOT_LOOK = new Set([
   "bpm", "follow", "repeats",                                        // the score
   "background", "sound",                                             // the preview
-  "resolution", "fps", "format", "exportAudio", "glowLayer",         // the export
+  "resolution", "fps", "format", "exportAudio", "glowLayer", "exportTrack", // the export
 ]);
 const STORAGE_KEY = "sheetglider.look";
 

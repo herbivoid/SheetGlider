@@ -119,6 +119,7 @@ export function finalizeScore(raw, tempoScale = 1) {
       el: n.el ?? `n${i}`, voice: n.voice ?? "1",
       tieFromPrev: !!n.tieStop, tieToNext: !!n.tieStart,
       stem: n.stem ?? null, beams: n.beams ?? null, tuplet: n.tuplet ?? null,
+      artic: n.artic ?? [], fermata: !!n.fermata, lyrics: n.lyrics ?? [],
     };
   };
   const notes = raw.notes.filter(n => n.dur > 0).map(makeNote)
@@ -157,6 +158,7 @@ export function finalizeScore(raw, tempoScale = 1) {
       elements.set(n.el, {
         id: n.el, staff: n.staff, voice: n.voice, start: n.start, dur: n.dur, type: n.type,
         dots: n.dots, stem: n.stem, beams: n.beams, tuplet: n.tuplet, notes: [],
+        artic: n.artic, fermata: n.fermata, lyrics: n.lyrics,
       });
     }
     elements.get(n.el).notes.push(n);
@@ -198,11 +200,54 @@ export function finalizeScore(raw, tempoScale = 1) {
     beamGroups,
     slurs: raw.slurs ?? [],
     tuplets: raw.tuplets ?? [],
+    dynamics: raw.dynamics ?? [],
+    wedges: raw.wedges ?? [],
+    repeats: raw.repeats ?? [],
+    voltas: raw.voltas ?? [],
+    loudness: loudnessCurve(raw.dynamics ?? [], raw.wedges ?? []),
     rests: raw.rests.map(r => ({ ...r, dots: r.dots ?? 0 })),
     bars,
     endBeat: raw.endBeat,
     timeOf: tempo.timeOf,
     beatAt: tempo.beatAt,
+  };
+}
+
+// How loud each dynamic is, 0..1. Accent-like marks (sf, fz…) only affect the
+// note they're on; the others last until the next mark.
+const LEVELS = {
+  pppp: 0.08, ppp: 0.15, pp: 0.25, p: 0.35, mp: 0.48, mf: 0.6, f: 0.75, ff: 0.88, fff: 0.96, ffff: 1,
+  fp: 0.35, sf: 0.85, sfz: 0.9, sffz: 0.95, fz: 0.85, rf: 0.8, rfz: 0.85, sfp: 0.35,
+};
+const MOMENTARY = new Set(["sf", "sfz", "sffz", "fz", "rf", "rfz"]);
+export const DEFAULT_LOUDNESS = 0.6; // mf, when a score has no dynamics
+
+// loudness(staff, beat) -> 0..1, from dynamic marks and crescendo/diminuendo
+// hairpins. A staff with no marks of its own follows the other staff.
+function loudnessCurve(dynamics, wedges) {
+  const known = dynamics.filter(d => d.value in LEVELS).sort((a, b) => a.beat - b.beat);
+  const lasting = known.filter(d => !MOMENTARY.has(d.value));
+  const forStaff = (list, staff) => (list.some(d => d.staff === staff) ? list.filter(d => d.staff === staff) : list);
+  const levelAt = (staff, beat) => {
+    let level = DEFAULT_LOUDNESS;
+    for (const d of forStaff(lasting, staff)) { if (d.beat > beat + 1e-6) break; level = LEVELS[d.value]; }
+    return level;
+  };
+  return (staff, beat) => {
+    const accent = forStaff(known, staff).find(d => MOMENTARY.has(d.value) && Math.abs(d.beat - beat) < 1e-6);
+    if (accent) return LEVELS[accent.value];
+    const w = forStaff(wedges, staff).find(x => beat >= x.start - 1e-6 && beat <= x.end + 1e-6);
+    if (!w) return levelAt(staff, beat);
+    // Inside a hairpin: glide from the level at its start to the next mark (or a step up/down).
+    const from = levelAt(staff, w.start);
+    // (A mark that would go the wrong way, like an ff right after a diminuendo, is ignored.)
+    const dir = w.type === "crescendo" ? 1 : -1;
+    const next = forStaff(lasting, staff).find(d => d.beat >= w.end - 1e-6 && d.beat <= w.end + 2);
+    const to = next && (LEVELS[next.value] - from) * dir > 0
+      ? LEVELS[next.value]
+      : Math.min(1, Math.max(0, from + dir * 0.2));
+    const u = (beat - w.start) / Math.max(1e-6, w.end - w.start);
+    return from + (to - from) * Math.min(1, Math.max(0, u));
   };
 }
 

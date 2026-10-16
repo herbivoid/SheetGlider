@@ -4,6 +4,8 @@ import { makeFrame } from "./ribbon.js";
 import { placeQuad, quadAxes } from "./facing.js";
 import { CHANGE_PAD, changesAt, engrave, keySignatureGlyphs } from "./engrave.js";
 import { layoutSpanners } from "./spanners.js";
+import { layoutExpression } from "./expression.js";
+import { DEFAULT_LOUDNESS } from "./score.js";
 
 // Draws everything on the ribbon. The notation itself is laid out flat by
 // engrave.js / spanners.js; here it's mapped onto the ribbon:
@@ -42,8 +44,9 @@ export class StaffView {
     this.quads = [];             // { mesh, s, v, g, scale, tint }
     this.visuals = new Map();    // key -> { onset, color, glow, glowScale }
     this.tubeMaterials = new Map();
-    this.lineMaterial = new THREE.MeshBasicMaterial({ color: params.staffColor });
-    this.inkMaterial = new THREE.MeshBasicMaterial({ color: params.noteColor, side: THREE.DoubleSide });
+    // Everything is "transparent" so depth fog can fade it out (see fog.js).
+    this.lineMaterial = new THREE.MeshBasicMaterial({ color: params.staffColor, transparent: true });
+    this.inkMaterial = new THREE.MeshBasicMaterial({ color: params.noteColor, side: THREE.DoubleSide, transparent: true });
     this.header = headerLayout(score);
     this.sEnd = this.sOf(score.endBeat) + 3;
     this.frame = makeFrame();
@@ -76,30 +79,53 @@ export class StaffView {
     this.tube(0, 0, bottom, top, lw, this.lineMaterial);
     if (n > 1) this.addGlyph(`brace:${top - bottom}`, 0, (top + bottom) / 2);
 
-    // Barlines, with any clef/key/time changes drawn just after them.
-    const changes = new Map(changesAt(score).map(c => [Math.round(c.beat * 960), c]));
-    const barSet = new Set(score.bars.map(b => Math.round(b * 960)));
-    for (const bar of score.bars) {
-      if (Math.abs(bar - score.endBeat) < 1e-6) {
-        this.tube(this.sEnd - 0.75, this.sEnd - 0.75, bottom, top, lw * 1.2, this.lineMaterial);
-        this.tube(this.sEnd - 0.2, this.sEnd - 0.2, bottom, top, 0.25, this.lineMaterial);
-        continue;
+    // Barlines (plain, final, or repeat signs), with any clef/key/time changes just after them.
+    const key = b => Math.round(b * 960);
+    const changes = new Map(changesAt(score).map(c => [key(c.beat), c]));
+    const repeats = new Map();
+    for (const r of score.repeats) repeats.set(key(r.beat), { ...repeats.get(key(r.beat)), [r.dir]: true });
+    const barSet = new Set(score.bars.map(key));
+    const line = (s, thick) => this.tube(s, s, bottom, top, thick ? 0.25 : lw * 1.2, this.lineMaterial);
+    const dots = s => score.staves.forEach((_, st) => {
+      for (const dv of [-0.5, 0.5]) this.addGlyph("dot", s, this.staffCenter(st) + dv);
+    });
+    for (const bar of [0, ...score.bars]) {
+      const rep = repeats.get(key(bar));
+      const final = Math.abs(bar - score.endBeat) < 1e-6;
+      if (bar === 0 && !rep) continue; // the system line already starts the staff
+      const s = final ? this.sEnd - 0.2 : this.barlineS(bar) - (rep ? 0.6 : 0);
+      if (final) {
+        line(s - 0.55);
+        line(s, true);
+        if (rep?.end) dots(s - 1.2);
+      } else if (rep?.end && rep?.start) {
+        line(s - 0.45); line(s, true); line(s + 0.45);
+        dots(s - 0.95); dots(s + 0.75);
+      } else if (rep?.end) {
+        line(s - 0.45); line(s + 0.05, true);
+        dots(s - 0.95);
+      } else if (rep?.start) {
+        line(s, true); line(s + 0.45);
+        dots(s + 0.75);
+      } else {
+        line(s);
       }
-      const change = changes.get(Math.round(bar * 960));
-      const s = this.sOf(bar) - this.extras.before(bar) - (change?.width ?? 0) - params.barGap * 0.55;
-      this.tube(s, s, bottom, top, lw * 1.2, this.lineMaterial);
-      if (change) this.drawChange(change, s + CHANGE_PAD / 2);
+      const change = changes.get(key(bar));
+      if (change && !final) this.drawChange(change, this.barlineS(bar) + CHANGE_PAD / 2);
     }
     // Changes in the middle of a bar (usually a clef) go right before their notes.
     for (const change of changes.values()) {
-      if (barSet.has(Math.round(change.beat * 960))) continue;
+      if (barSet.has(key(change.beat))) continue;
       this.drawChange(change, this.sOf(change.beat) - this.extras.before(change.beat) - change.width + CHANGE_PAD / 2);
     }
+    this.drawVoltas();
 
-    // Notes, rests, beams, ties, slurs, tuplets.
+    // Notes, rests, beams, ties, slurs, tuplets, dynamics, articulations, lyrics, tails.
     const sOf = b => this.sOf(b);
-    const layout = engrave(score, { sOf, staffCenter: st => this.staffCenter(st), lineThickness: params.lineThickness });
+    const staffCenter = st => this.staffCenter(st);
+    const layout = engrave(score, { sOf, staffCenter, lineThickness: params.lineThickness });
     layoutSpanners(layout, score);
+    layoutExpression(layout, score, { sOf, staffCenter, params });
     for (const vis of layout.visuals) this.addVisual(vis);
     for (const g of layout.glyphs) this.addGlyph(g.kind, g.s, g.v, g.scale, g.tint);
     for (const t of layout.tubes) {
@@ -107,12 +133,75 @@ export class StaffView {
       this.tube(t.s0, t.s1, t.v0, t.v1, t.r, material);
     }
     for (const b of layout.bands) this.slab(b);
+    for (const t of layout.tails) this.slab(t, this.tailMaterial());
 
     for (const rest of score.rests) {
       let s = sOf(rest.start);
       if (rest.measureRest) s = (sOf(rest.start) + sOf(rest.start + rest.dur) - params.barGap) / 2;
       this.addGlyph(`rest:${rest.type}`, s, this.staffCenter(rest.staff));
     }
+  }
+
+  // Where the barline before `bar` (a beat) sits: before the room taken by
+  // changes, accidentals and grace notes in front of the bar's first notes.
+  barlineS(bar) {
+    const change = changesAt(this.score).find(c => Math.abs(c.beat - bar) < 1e-6);
+    return this.sOf(bar) - this.extras.before(bar) - (change?.width ?? 0) - this.params.barGap * 0.55;
+  }
+
+  // 1st/2nd endings: a bracket over their bars with the number, open at the end of the last one.
+  drawVoltas() {
+    const voltas = [...this.score.voltas].sort((a, b) => a.start - b.start);
+    const top = this.staffCenter(0) + 2;
+    const staffHigh = Math.max(top, ...this.score.notes.filter(nt => nt.staff === 0).map(nt => nt.pos / 2));
+    // With lyrics under the staff, dynamics move above it (expression.js): go above those too.
+    const P = this.params;
+    const dynamicsAbove = P.showDynamics && P.showLyrics && this.score.dynamics.length
+      && this.score.elements.some(e => e.staff === 0 && e.lyrics?.length);
+    voltas.forEach((vo, i) => {
+      let high = top;
+      for (const nt of this.score.notes) {
+        if (nt.staff === 0 && nt.start >= vo.start - 1e-6 && nt.start < vo.end - 1e-6) high = Math.max(high, nt.pos / 2);
+      }
+      const v = Math.max(high + 3, dynamicsAbove ? Math.max(this.staffCenter(0) + 4.5, staffHigh + 2.2) + 2.6 : 0);
+      const x0 = (vo.start === 0 ? this.sOf(0) - 1 : this.barlineS(vo.start)) + 0.3;
+      const x1 = (Math.abs(vo.end - this.score.endBeat) < 1e-6 ? this.sEnd - 0.8 : this.barlineS(vo.end)) - 0.3;
+      this.tube(x0, x1, v, v, 0.05, this.inkMaterial);
+      this.tube(x0, x0, v - 1.5, v, 0.05, this.inkMaterial);
+      const closed = voltas[i + 1] && Math.abs(voltas[i + 1].start - vo.end) < 1e-6;
+      if (closed) this.tube(x1, x1, v - 1.5, v, 0.05, this.inkMaterial);
+      this.addGlyph(`text:label:${vo.label}`, x0 + 0.9, v - 1.25);
+    });
+  }
+
+  // Duration tails share one material: lit up behind the character, dim ahead of it.
+  tailMaterial() {
+    if (this.tailMat) return this.tailMat;
+    const P = this.params;
+    this.tailUniforms = {
+      uNow: { value: -1e9 },
+      uLit: { value: new THREE.Color(P.glowColor) },
+      uPlayed: { value: new THREE.Color(P.playedColor) },
+      uAlpha: { value: P.tailOpacity },
+    };
+    const m = new THREE.MeshBasicMaterial({ color: P.noteColor, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+    m.onBeforeCompile = shader => {
+      Object.assign(shader.uniforms, this.tailUniforms);
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", "#include <common>\nattribute float aS;\nvarying float vS;")
+        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvS = aS;");
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", "#include <common>\nvarying float vS;\nuniform float uNow;\nuniform vec3 uLit;\nuniform vec3 uPlayed;\nuniform float uAlpha;")
+        .replace("vec4 diffuseColor = vec4( diffuse, opacity );", `
+          // Behind the character: bright glow fading to the played color over ~8 spaces.
+          float past = uNow - vS;
+          float lit = past > 0.0 ? clamp(1.0 - past / 8.0, 0.0, 1.0) : 0.0;
+          vec3 tailColor = past > 0.0 ? mix(uPlayed, uLit, lit) : diffuse;
+          float tailAlpha = past > 0.0 ? mix(uAlpha * 1.3, 0.9, lit) : uAlpha;
+          vec4 diffuseColor = vec4(tailColor, tailAlpha);`);
+    };
+    this.tailMat = m;
+    return m;
   }
 
   // Clef / key / time signature change, starting at s.
@@ -138,7 +227,12 @@ export class StaffView {
   }
 
   addVisual(vis) {
-    const visual = { onset: this.score.timeOf(vis.beat) + vis.offset, color: new THREE.Color(this.params.noteColor), glow: null, scale: vis.scale };
+    const visual = {
+      onset: this.score.timeOf(vis.beat) + vis.offset, color: new THREE.Color(this.params.noteColor),
+      glow: null, scale: vis.scale,
+      loud: this.score.loudness(vis.note.staff, vis.note.start),
+      accent: vis.note.artic?.some(a => a === "accent" || a === "marcato"),
+    };
     if (vis.glow) {
       visual.glow = new THREE.Sprite(new THREE.SpriteMaterial({
         map: glyph("glow").texture, color: this.params.glowColor, transparent: true, depthWrite: false, opacity: 0,
@@ -172,7 +266,9 @@ export class StaffView {
   }
 
   tubeMaterial(tint) {
-    if (!this.tubeMaterials.has(tint)) this.tubeMaterials.set(tint, new THREE.MeshBasicMaterial({ color: this.params.noteColor }));
+    if (!this.tubeMaterials.has(tint)) {
+      this.tubeMaterials.set(tint, new THREE.MeshBasicMaterial({ color: this.params.noteColor, transparent: true }));
+    }
     return this.tubeMaterials.get(tint);
   }
 
@@ -186,7 +282,8 @@ export class StaffView {
   }
 
   // A band between two edges (va, vb) along the staff, as a thin slab on the ribbon.
-  slab(points) {
+  // Each vertex also carries its distance along the staff (aS), for the tail effect.
+  slab(points, material = this.inkMaterial) {
     // Resample so the slab bends with the ribbon.
     const pts = [];
     for (let i = 0; i < points.length - 1; i++) {
@@ -201,6 +298,7 @@ export class StaffView {
     pts.push(points[points.length - 1]);
 
     const pos = [];
+    const along = [];
     const f = this.frame;
     const n = new THREE.Vector3();
     const p = new THREE.Vector3();
@@ -211,6 +309,7 @@ export class StaffView {
         for (const side of [1, -1]) {
           p.copy(f.P).addScaledVector(f.U, v).addScaledVector(n, side);
           pos.push(p.x, p.y, p.z);
+          along.push(q.s);
         }
       }
     }
@@ -223,8 +322,9 @@ export class StaffView {
     }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute("aS", new THREE.Float32BufferAttribute(along, 1));
     geo.setIndex(index);
-    this.group.add(new THREE.Mesh(geo, this.inkMaterial));
+    this.group.add(new THREE.Mesh(geo, material));
   }
 
   update(t, camera) {
@@ -247,14 +347,23 @@ export class StaffView {
       const e = Math.exp(-dt / params.glowDecay) * Math.min(1, dt / 0.02 + 0.3);
       vis.color.copy(played).lerp(hot, Math.min(1, e * 1.2));
       if (!vis.glow) continue;
+      // Louder (and accented) notes glow bigger and brighter.
+      const gain = 1 + params.dynamicsEffect * (vis.loud - DEFAULT_LOUDNESS) * 1.6 + (vis.accent ? 0.3 : 0);
       vis.glow.visible = e > 0.01;
-      vis.glow.material.opacity = e * params.glowStrength;
-      const size = params.glowSize * vis.scale * (0.7 + 0.5 * (1 - e));
+      vis.glow.material.opacity = Math.min(1, e * params.glowStrength * gain);
+      const size = params.glowSize * vis.scale * gain * (0.7 + 0.5 * (1 - e));
       vis.glow.scale.set(size, size, 1);
     }
     for (const [tint, material] of this.tubeMaterials) {
       const vis = this.visuals.get(tint);
       if (vis) material.color.copy(vis.color);
+    }
+    // Duration tails light up up to where the character is now.
+    if (this.tailUniforms) {
+      this.tailUniforms.uNow.value = this.sOf(this.score.beatAt(t));
+      this.tailUniforms.uLit.value.set(params.glowColor);
+      this.tailUniforms.uPlayed.value.set(params.playedColor);
+      this.tailUniforms.uAlpha.value = params.tailOpacity;
     }
 
     for (const q of this.quads) {

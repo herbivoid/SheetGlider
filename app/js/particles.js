@@ -95,7 +95,8 @@ export class Particles {
         const s = this.sOf(this.score.beatAt(n.on));
         this.ribbon.frameAt(s, this.frame);
         p0.copy(this.frame.P).addScaledVector(this.frame.U, n.p / 2);
-        for (let j = 0; j < P.burstCount; j++) {
+        const count = Math.round(P.burstCount * Math.max(0, this.hero.gain(n))); // louder: more sparks
+        for (let j = 0; j < count; j++) {
           emit(i * 977 + j * 13, n.on, life * (0.6 + 0.4 * rand(i * 31 + j)), p0, this.frame, 5, 0);
         }
       }

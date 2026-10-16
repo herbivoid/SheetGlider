@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { applyFog } from "./fog.js";
 import { demoRaw, finalizeScore } from "./score.js";
 import { buildSpacing } from "./spacing.js";
 import { Ribbon } from "./ribbon.js";
@@ -44,6 +45,7 @@ function rebuild() {
     world.hero.dispose();
     world.particles.dispose();
   }
+  applyFog(scene, params);
   const score = finalizeScore(raw, params.bpm / rawBpm());
   const extras = measureExtras(score, params);
   const spacing = buildSpacing(score, {
@@ -237,9 +239,19 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   const started = performance.now();
+  // Optional character track: where the character is on screen, frame by frame.
+  const track = ["frame,time_s,x,y,feet_x,feet_y,height_px,rotation_deg,visible"];
+  const renderMain = mode => tt => {
+    renderAt(tt, mode);
+    if (!params.exportTrack) return;
+    const p = world.hero.screenInfo(camera, w, h);
+    const f = n => n.toFixed(2);
+    track.push([Math.round((tt - from) * params.fps), (tt - from).toFixed(4), f(p.x), f(p.y),
+      f(p.feetX), f(p.feetY), f(p.height), f(p.rotation), p.visible ? 1 : 0].join(","));
+  };
   const layers = params.glowLayer
-    ? [{ suffix: "", render: tt => renderAt(tt, "main") }, { suffix: "_glow", render: tt => renderAt(tt, "glow"), opaque: true }]
-    : [{ suffix: "", render: tt => renderAt(tt, "all") }];
+    ? [{ suffix: "", render: renderMain("main") }, { suffix: "_glow", render: tt => renderAt(tt, "glow"), opaque: true }]
+    : [{ suffix: "", render: renderMain("all") }];
   let results = null;
   try {
     results = await exportVideo({
@@ -260,6 +272,11 @@ async function runExport({ from = world.t0, to = world.t1 } = {}) {
       const res = await fetch(`/api/export/audio?video=${encodeURIComponent(results[0].path)}`, { method: "POST", body: wav });
       const saved = await res.json();
       lines.push(saved.error ? `Audio failed: ${saved.error}` : `Audio:\n${saved.path}`);
+    }
+    if (ok && params.exportTrack) {
+      const res = await fetch(`/api/export/track?video=${encodeURIComponent(results[0].path)}`, { method: "POST", body: track.join("\n") + "\n" });
+      const saved = await res.json();
+      lines.push(saved.error ? `Character track failed: ${saved.error}` : `Character track:\n${saved.path}`);
     }
     const secs = (performance.now() - started) / 1000;
     titleEl.textContent = ok ? `Export finished in ${secs.toFixed(0)} s` : "Export failed";

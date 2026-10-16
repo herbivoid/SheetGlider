@@ -55,7 +55,13 @@ const G = {
   restWhole: "", restHalf: "", restQuarter: "", rest8th: "",
   rest16th: "", rest32nd: "",
   dot: "", brace: "",
+  // Articulations: [above, below]
+  accent: ["", ""], staccato: ["", ""], tenuto: ["", ""],
+  staccatissimo: ["", ""], marcato: ["", ""], fermata: ["", ""],
 };
+// Dynamics are spelled from these letters (mf = m + f).
+const DYNAMIC_LETTERS = { p: "", m: "", f: "", r: "", s: "", z: "", n: "" };
+const TEXT_FONT = 'Georgia, "Times New Roman", serif';
 const timeSigDigit = d => String.fromCharCode(0xE080 + d);
 
 
@@ -147,9 +153,55 @@ function build(kind) {
         music(ctx, G.brace, -w - 0.2, -span / 2, sy, sx);
       });
     }
+    // Articulation or fermata ("artic:staccato:above"), centered.
+    case "artic": {
+      const ch = G[a]?.[b === "below" ? 1 : 0] ?? G.staccato[0];
+      return canvasGlyph(1.5, 1.5, 1.5, 1.5, ctx => centered(ctx, ch));
+    }
+    // A dynamic ("dyn:mf"): music-font letters if it's spelled with them, else italic text.
+    case "dyn": {
+      const word = kind.slice(4);
+      if ([...word].every(c => c in DYNAMIC_LETTERS)) {
+        const text = [...word].map(c => DYNAMIC_LETTERS[c]).join("");
+        return canvasGlyph(3.5, 3.5, 1.5, 1.5, ctx => centered(ctx, text));
+      }
+      return textGlyph(word, `italic ${TEXT_FONT}`, 1.5);
+    }
+    // Plain text ("text:lyric:twin"): lyrics, labels.
+    case "text": {
+      const style = a;
+      const words = kind.slice(6 + style.length);
+      return style === "label" ? textGlyph(words, `bold ${TEXT_FONT}`, 1.3) : textGlyph(words, TEXT_FONT, 1.6);
+    }
     case "glow": return glowGlyph();
     default: throw new Error(`unknown glyph ${kind}`);
   }
+}
+
+// Width in staff spaces of a lyric syllable (for spacing notes so lyrics don't collide).
+let lyricProbe = null;
+export function lyricWidth(text) {
+  lyricProbe ??= document.createElement("canvas").getContext("2d");
+  lyricProbe.font = `${1.6 * PX}px ${TEXT_FONT}`;
+  return lyricProbe.measureText(text).width / PX;
+}
+
+// Ordinary text (not the music font), `size` staff spaces tall, sitting on its
+// baseline: anchored horizontally centered, at the baseline.
+function textGlyph(text, font, size) {
+  const probe = document.createElement("canvas").getContext("2d");
+  probe.font = `${size * PX}px ${font}`;
+  const w = probe.measureText(text).width / PX + 0.4;
+  return canvasGlyph(w / 2, w / 2, size * 0.35, size * 1.05, ctx => {
+    ctx.save();
+    const m = ctx.getTransform();
+    ctx.setTransform(1, 0, 0, 1, m.e, m.f);
+    ctx.font = `${size * PX}px ${font}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(text, 0, 0);
+    ctx.restore();
+  });
 }
 
 // Draws text with its ink centered on the anchor.

@@ -4,6 +4,7 @@ import queue
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -186,12 +187,13 @@ def parse_upload(name, data, expand_repeats):
     return result
 
 
-def save_audio(video_path, data):
-    """Saves a WAV next to an exported video (same name, .wav)."""
+def save_beside(video_path, data, ending):
+    """Saves a file next to an exported video: same name, with `ending` (".wav", "_track.csv")."""
     video = Path(video_path).resolve()
     if OUTPUT.resolve() not in video.parents:
-        raise ValueError("audio can only be saved next to an export in the output folder")
-    target = video.with_suffix(".wav") if video.suffix else video.parent / (video.name + ".wav")
+        raise ValueError("files can only be saved next to an export in the output folder")
+    stem = video.stem if video.suffix else video.name
+    target = video.parent / (stem + ending)
     target.write_bytes(data)
     return {"ok": True, "path": str(target)}
 
@@ -254,7 +256,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_json(parse_upload(query.get("name", ["score.musicxml"])[0], body,
                                             query.get("repeats", ["1"])[0] == "1"))
             elif url.path == "/api/export/audio":
-                self.send_json(save_audio(query.get("video", [""])[0], body))
+                self.send_json(save_beside(query.get("video", [""])[0], body, ".wav"))
+            elif url.path == "/api/export/track":
+                self.send_json(save_beside(query.get("video", [""])[0], body, "_track.csv"))
             elif url.path == "/api/export/frame":
                 job = JOBS[query["id"][0]]
                 rows = (int(query["y0"][0]), int(query["y1"][0])) if "y0" in query else None
@@ -273,20 +277,33 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"error": str(exc)}, 500)
 
 
-class IPv6Server(ThreadingHTTPServer):
+class Server(ThreadingHTTPServer):
+    # On Windows, "address reuse" lets a second server silently share a port
+    # that's already taken; refuse instead, so we can move to a free port.
+    allow_reuse_address = sys.platform != "win32"
+
+
+class IPv6Server(Server):
     address_family = socket.AF_INET6
 
 
-def serve(port=8765):
-    """Listens on 127.0.0.1, and on ::1 too when available.
+def serve(port=8765, tries=10):
+    """Starts the server on `port`, or the next free port after it.
 
-    Browsers try "localhost" over IPv6 first; with nothing listening there, every
-    new connection on Windows stalls before falling back to IPv4.
+    Listens on 127.0.0.1, and on ::1 too when available: browsers try
+    "localhost" over IPv6 first, and with nothing listening there, every new
+    connection on Windows stalls before falling back to IPv4.
+    Returns (server, port actually used).
     """
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    try:
-        v6 = IPv6Server(("::1", port), Handler)
-        threading.Thread(target=v6.serve_forever, daemon=True).start()
-    except OSError:
-        pass  # no IPv6 loopback; IPv4 alone still works
-    return server
+    for p in range(port, port + tries):
+        try:
+            server = Server(("127.0.0.1", p), Handler)
+        except OSError:
+            continue  # taken (maybe another copy of SheetGlider): try the next one
+        try:
+            v6 = IPv6Server(("::1", p), Handler)
+            threading.Thread(target=v6.serve_forever, daemon=True).start()
+        except OSError:
+            pass  # no IPv6 loopback; IPv4 alone still works
+        return server, p
+    raise OSError(f"ports {port}-{port + tries - 1} are all in use")

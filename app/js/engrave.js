@@ -1,5 +1,5 @@
 import { flagCount } from "./score.js";
-import { METRICS } from "./glyphs.js";
+import { METRICS, lyricWidth } from "./glyphs.js";
 
 // Notation layout in the staff's own flat coordinates: s = distance along the
 // staff, v = height (both in staff spaces; v = 0 is staff 0's middle line).
@@ -59,7 +59,8 @@ function accidentalColumns(notes) {
 
 // Room needed just before each beat (barlines, clef/key/time changes,
 // accidentals, grace notes), for the spacing and for placing barlines.
-export function measureExtras(score, { barGap }) {
+export function measureExtras(score, params) {
+  const { barGap } = params;
   const extras = new Map();
   const add = (beat, w) => extras.set(beatKey(beat), (extras.get(beatKey(beat)) ?? 0) + w);
   const before = new Map(); // what sits left of the notes at a beat (accidentals, graces)
@@ -78,7 +79,27 @@ export function measureExtras(score, { barGap }) {
   for (const [k, w] of before) extras.set(k, (extras.get(k) ?? 0) + w);
   for (const bar of score.bars) if (bar < score.endBeat - 1e-6) add(bar, barGap);
   for (const c of changesAt(score)) add(c.beat, c.width);
+  for (const r of score.repeats) add(r.beat, 1.2);
+  if (params.showLyrics) lyricRoom(score, params, add);
   return { extras, before: beat => before.get(beatKey(beat)) ?? 0 };
+}
+
+// Extra room where two neighbouring syllables wouldn't fit side by side
+// (estimated from the unsmoothed spacing).
+function lyricRoom(score, params, add) {
+  const lastByLane = new Map();
+  for (const e of score.elements) {
+    for (const ly of e.lyrics ?? []) {
+      const lane = `${e.staff}|${ly.verse}`;
+      const prev = lastByLane.get(lane);
+      lastByLane.set(lane, { e, ly });
+      if (!prev) continue;
+      const hyphen = prev.ly.syllabic === "begin" || prev.ly.syllabic === "middle";
+      const need = ((lyricWidth(prev.ly.text) + lyricWidth(ly.text)) / 2) * params.lyricsSize + (hyphen ? 1.6 : 0.8);
+      const have = params.quarterWidth * Math.pow(e.start - prev.e.start, params.spacingExponent);
+      if (need > have) add(e.start, need - have);
+    }
+  }
 }
 
 export const CHANGE_PAD = 1.4;

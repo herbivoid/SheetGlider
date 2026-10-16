@@ -3,6 +3,7 @@ import { placeQuad, quadAxes } from "./facing.js";
 import { makeFrame } from "./ribbon.js";
 import { monotoneCubic } from "./util.js";
 import { STATES } from "./characters.js";
+import { DEFAULT_LOUDNESS } from "./score.js";
 
 // A character has up to 6 sprites (see characters.js for where they come from):
 //   glide  in the air between notes, and standing on short notes
@@ -122,8 +123,9 @@ export class CharacterView {
 
     if (t < takeoff) {
       const stand = takeoff - cur.on;
-      const long = cur.end - cur.on >= P.cheerMin;
-      const hitHold = long ? Math.min(0.4, stand * 0.5) : Math.min(0.12, stand * 0.4);
+      // Long notes (and fermatas) get the celebration; staccato notes just a quick touch.
+      const long = (cur.end - cur.on >= P.cheerMin || cur.fermata) && !cur.staccato;
+      const hitHold = long ? Math.min(0.4, stand * 0.5) : Math.min(cur.staccato ? 0.07 : 0.12, stand * 0.4);
       // Skip the crouch sprites when there's barely time to stand: squash does the job.
       const crouchOk = stand > 0.16;
       let state = long ? "ride" : "glide";
@@ -134,19 +136,25 @@ export class CharacterView {
       const l = lift(t);
       return {
         p: cur.p + l + (l > 0 ? this.bob(t) * (l / P.restLift) : 0),
-        state, landed, takeoff, crouching: state === "crouch" && t > takeoff - antic,
+        state, landed, takeoff, crouching: state === "crouch" && t > takeoff - antic, impact: this.gain(cur),
       };
     }
 
-    // In the air between cur and next.
+    // In the air between cur and next; louder notes get higher hops.
     const u = (t - takeoff) / hop;
     const from = cur.p + lift(takeoff) + (resting ? this.bob(takeoff) : 0);
-    const arc = P.hopHeight * Math.pow(hop / P.hopMax, 0.7) * smooth01(0.06, 0.2, hop);
+    const arc = P.hopHeight * this.gain(next) * Math.pow(hop / P.hopMax, 0.7) * smooth01(0.06, 0.2, hop);
     const p = from + (next.p - from) * easeInOut(u) + arc * 4 * u * (1 - u);
-    return { p, state: "glide", landed, takeoff };
+    return { p, state: "glide", landed, takeoff, impact: this.gain(cur) };
   }
 
   bob(t) { return 0.35 * Math.sin(t * Math.PI * 1.6); }
+
+  // How strongly to play a note: louder and accented notes get more (1 = normal).
+  gain(target) {
+    if (target?.loud === undefined) return 1;
+    return 1 + this.params.dynamicsEffect * (target.loud - DEFAULT_LOUDNESS) * 1.6 + (target.accent ? 0.25 : 0);
+  }
 
   update(t, camera) {
     const P = this.params;
@@ -158,7 +166,7 @@ export class CharacterView {
     let sx = 1;
     let sy = 1;
     if (m.landed >= 0 && t >= m.landed) {
-      const e = Math.exp(-(t - m.landed) / 0.07);
+      const e = Math.exp(-(t - m.landed) / 0.07) * Math.min(1.6, m.impact ?? 1);
       sy *= 1 - 0.28 * P.squash * e;
       sx *= 1 + 0.22 * P.squash * e;
     }
@@ -246,6 +254,25 @@ export class CharacterView {
     for (let i = used; i < this.ghosts.length; i++) this.ghosts[i].visible = false;
   }
 
+  // Where the character was drawn in the last rendered frame, in pixels from the
+  // top-left (for the position-track export).
+  screenInfo(camera, width, height) {
+    const toPx = (x, y) => {
+      const v = new THREE.Vector3(x, y, 0).applyMatrix4(this.mesh.matrixWorld).project(camera);
+      return [((v.x + 1) / 2) * width, ((1 - v.y) / 2) * height, v.z];
+    };
+    const [ax, ay] = this.character.def.anchor ?? [0.5, 0];
+    const center = toPx(0, 0);
+    const feet = toPx(ax - 0.5, ay - 0.5);
+    const top = toPx(ax - 0.5, 0.5);
+    return {
+      x: center[0], y: center[1], feetX: feet[0], feetY: feet[1],
+      height: Math.hypot(top[0] - feet[0], top[1] - feet[1]),
+      rotation: (Math.atan2(top[0] - feet[0], feet[1] - top[1]) * 180) / Math.PI, // 0 = upright, clockwise +
+      visible: center[2] < 1,
+    };
+  }
+
   // World position of the character's feet at time t (for the camera and particles).
   positionAt(t, target = new THREE.Vector3()) {
     const s = this.sOf(this.score.beatAt(t));
@@ -309,6 +336,10 @@ function pickTargets(score, follow) {
       on: score.timeOf(n.start),
       end: score.timeOf(n.start + n.soundingDur),
       p: n.pos - n.staff * 20, // staff 1 sits 10 spaces (20 half-spaces) below staff 0
+      loud: score.loudness(n.staff, n.start),
+      accent: n.artic.includes("accent") || n.artic.includes("marcato"),
+      staccato: n.artic.includes("staccato") || n.artic.includes("staccatissimo"),
+      fermata: n.fermata,
     }));
 }
 
