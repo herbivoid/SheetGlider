@@ -1,4 +1,5 @@
 import { METRICS, lyricWidth } from "./glyphs.js";
+import { staffHalf } from "./score.js";
 
 // Dynamics, hairpins, articulations, fermatas, lyrics and duration tails, laid
 // out in the same flat staff coordinates as engrave.js (s along the staff,
@@ -6,19 +7,23 @@ import { METRICS, lyricWidth } from "./glyphs.js";
 
 export function layoutExpression(out, score, { sOf, staffCenter, params }) {
   // Vertical room around each staff: where its notes reach, and whether it has lyrics.
-  const staves = score.staves.map((_, i) => ({ c: staffCenter(i), lo: Infinity, hi: -Infinity, lyrics: false }));
+  const staves = score.staves.map((def, i) => {
+    const c = staffCenter(i);
+    return { c, top: c + staffHalf(def), bottom: c - staffHalf(def), lo: Infinity, hi: -Infinity, lyrics: false };
+  });
   for (const inf of out.info.values()) {
     const st = staves[inf.e.staff];
     for (const n of inf.e.notes) {
       st.lo = Math.min(st.lo, inf.c + n.pos / 2);
       st.hi = Math.max(st.hi, inf.c + n.pos / 2);
     }
+    if (inf.tab && !inf.whole) st.lo = Math.min(st.lo, inf.tip); // tab rhythm hangs below the staff
     if (inf.e.lyrics?.length) st.lyrics = true;
   }
   staves.forEach((st, i) => {
-    st.lyricV = Math.min(st.c - 5.5, st.lo - 2.6);
+    st.lyricV = Math.min(st.bottom - 3.5, st.lo - 2.6);
     // Dynamics go under the staff (between the staves on piano), or above it when lyrics are under it.
-    st.dynV = st.lyrics ? Math.max(st.c + 4.5, st.hi + 2.2) : Math.min(st.c - 4.5, st.lo - 2.0);
+    st.dynV = st.lyrics ? Math.max(st.top + 2.5, st.hi + 2.2) : Math.min(st.bottom - 2.5, st.lo - 2.0);
     if (staves.length > 1 && i === 0 && !st.lyrics) st.dynV = Math.max(st.dynV, st.c - 6);
   });
   out.tails = [];
@@ -37,14 +42,15 @@ function articulations(out) {
     // On the notehead side, away from the stem; inside the staff they sit in a space, not on a line.
     const side = inf.whole ? 1 : -inf.dir;
     let v = side > 0 ? Math.max(...vs) + 1.0 : Math.min(...vs) - 1.0;
+    if (inf.tab) v += side * 0.3; // clear of the fret number
     for (const a of e.artic) {
-      if (Math.abs(v - inf.c) < 2.4) v = inf.c + Math.round(v - inf.c - 0.5) + 0.5;
+      if (!inf.tab && Math.abs(v - inf.c) < 2.4) v = inf.c + Math.round(v - inf.c - 0.5) + 0.5;
       out.glyphs.push({ kind: `artic:${a}:${side > 0 ? "above" : "below"}`, s: inf.s, v, scale: 1, tint: inf.tint });
       v += side * 0.9;
     }
     if (e.fermata) {
       const stemUp = !inf.whole && inf.dir > 0 ? inf.tip : -Infinity;
-      const v = Math.max(...vs, stemUp, inf.c + 2) + 1.3;
+      const v = Math.max(...vs, stemUp, inf.c + (inf.half ?? 2)) + 1.3;
       out.glyphs.push({ kind: "artic:fermata:above", s: inf.s, v, scale: 1, tint: inf.tint });
     }
   }

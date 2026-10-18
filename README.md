@@ -20,7 +20,7 @@ This opens `http://127.0.0.1:8765/app/` in your browser. If that port is busy (s
 
 Load a **MusicXML** file (`.musicxml`, `.xml`, or compressed `.mxl`) with **Load MusicXML…** or by dropping it on the page. MuseScore (free) and every other notation program can export MusicXML. MuseScore can also open a MIDI file and save it as MusicXML.
 
-- One instrument is used: a single staff, or both staves of a piano part.
+- One instrument is used: a single staff, or both staves of a piano part (or of a guitar part with notation and tab).
 - The tempo comes from the file's metronome marks (tempo changes included). The **tempo** setting scales it.
 - **Character follows** picks the top staff, the bottom staff, or the highest note.
 - **Play repeats** (on by default) plays repeats and 1st/2nd endings as performed. Turn it off to play straight through as written; repeat signs and ending brackets are drawn then.
@@ -37,6 +37,14 @@ Notation drawn:
 - repeat signs and 1st/2nd endings
 
 Each of these can be switched off under **Notation**. Not drawn: text expressions (like *dolce*), pedal marks.
+
+**Guitar tab:** a tablature staff is drawn as tab: fret numbers on the strings, with the character landing on top of them. Also drawn:
+- hammer-ons and pull-offs (an arc marked H or P)
+- slides
+- bends with their amount (½, full…), held bends and releases
+- tied notes, in parentheses
+
+Rhythm is shown as stems and beams below the tab. A guitar part with both a notation staff and a tab staff (MuseScore exports a linked tab staff this way) shows both. The rhythm then appears only on the notation staff. **Tab rhythm** (under Notation) can force the stems on or off. A notation staff for guitar gets the guitar treble clef, the one with a small 8 below it, since guitar sounds an octave lower than written.
 
 The notation also shapes the animation. **Dynamics affect motion** sets how much:
 - louder notes glow bigger, throw more sparks and get higher hops
@@ -105,6 +113,8 @@ Pick a **shape** preset: flat, arch, valley, waterslide, approach, fly-in, fly-a
 - an arch
 - extra waves
 - two extra twists, each placed anywhere along the piece (0 = start, 1 = end) and spread over any length
+
+Where the staff turns upside down, the music turns with it, but words and numbers (lyrics, dynamics, fret numbers) stay the right way up so they can still be read.
 
 ## Characters
 

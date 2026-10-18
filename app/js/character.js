@@ -303,7 +303,7 @@ function chordEvents(score, targets, params) {
   targets.forEach((tg, i) => {
     const mates = (byStart.get(tg.note.start) ?? [])
       .filter(n => n !== tg.note && (params.ghosts === "all staves" || n.staff === tg.note.staff))
-      .map(n => ({ p: n.pos - n.staff * 20, long: score.timeOf(n.start + n.soundingDur) - tg.on >= params.cheerMin }))
+      .map(n => ({ p: n.land - n.staff * 20, long: score.timeOf(n.start + n.soundingDur) - tg.on >= params.cheerMin }))
       .filter(g => g.p !== tg.p)
       .sort((a, b) => Math.abs(a.p - tg.p) - Math.abs(b.p - tg.p))
       .slice(0, params.maxGhosts);
@@ -327,7 +327,7 @@ function pickTargets(score, follow) {
     if (n.tieFromPrev) continue;
     if (follow !== "top" && n.staff !== follow) continue;
     const prev = byOnset.get(n.start);
-    if (!prev || n.pos + n.staff * -20 > prev.pos + prev.staff * -20) byOnset.set(n.start, n);
+    if (!prev || n.land + n.staff * -20 > prev.land + prev.staff * -20) byOnset.set(n.start, n);
   }
   return [...byOnset.values()]
     .sort((a, b) => a.start - b.start)
@@ -335,7 +335,7 @@ function pickTargets(score, follow) {
       note: n,
       on: score.timeOf(n.start),
       end: score.timeOf(n.start + n.soundingDur),
-      p: n.pos - n.staff * 20, // staff 1 sits 10 spaces (20 half-spaces) below staff 0
+      p: n.land - n.staff * 20, // staff 1 sits 10 spaces (20 half-spaces) below staff 0; land: on top of fret numbers
       loud: score.loudness(n.staff, n.start),
       accent: n.artic.includes("accent") || n.artic.includes("marcato"),
       staccato: n.artic.includes("staccato") || n.artic.includes("staccatissimo"),

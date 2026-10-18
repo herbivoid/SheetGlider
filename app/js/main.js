@@ -63,7 +63,7 @@ function rebuild() {
   const t0 = -params.preroll;
   const t1 = score.timeOf(score.endBeat) + params.postroll;
   const [w, h] = exportSize();
-  const vRange = [staff.staffCenter(score.staves.length - 1) - 3, 3];
+  const vRange = staff.vRange();
   rig.bake({ t0, t1, aspect: w / h, ribbon, sEnd: staff.sEnd, vRange, positionAt: (tt, v) => hero.positionAt(tt, v) });
   world = { score, staff, hero, particles, t0, t1 };
   t = THREE.MathUtils.clamp(t, t0, t1);

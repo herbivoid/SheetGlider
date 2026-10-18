@@ -51,7 +51,7 @@ const G = {
   flag8thUp: "", flag8thDown: "", flag16thUp: "", flag16thDown: "",
   flag32ndUp: "", flag32ndDown: "",
   flat: "", natural: "", sharp: "", doubleSharp: "", doubleFlat: "",
-  gClef: "", fClef: "", cClef: "",
+  gClef: "", gClef8vb: "", fClef: "", cClef: "",
   restWhole: "", restHalf: "", restQuarter: "", rest8th: "",
   rest16th: "", rest32nd: "",
   dot: "", brace: "",
@@ -62,6 +62,8 @@ const G = {
 // Dynamics are spelled from these letters (mf = m + f).
 const DYNAMIC_LETTERS = { p: "", m: "", f: "", r: "", s: "", z: "", n: "" };
 const TEXT_FONT = 'Georgia, "Times New Roman", serif';
+const FRET_FONT = '600 1px Arial, "Helvetica Neue", Helvetica, sans-serif'; // size set where used
+const FRET_SIZE = 1.45; // font size in staff spaces: digits about one space tall
 const timeSigDigit = d => String.fromCharCode(0xE080 + d);
 
 
@@ -134,8 +136,16 @@ function build(kind) {
       if (a === "bass") music(ctx, G.fClef, 0, 1);
       else if (a === "alto") music(ctx, G.cClef, 0, 0);
       else if (a === "tenor") music(ctx, G.cClef, 0, 1);
+      else if (a === "treble8vb") music(ctx, G.gClef8vb, 0, -1);
+      else if (a === "tab") tabClef(ctx, Number(b) || 6);
       else music(ctx, G.gClef, 0, -1);
     });
+    // A tab fret number ("fret:12", "fret:(7)"), centered on its string.
+    case "fret": {
+      const text = kind.slice(5);
+      const w = fretWidth(text) + 0.3;
+      return canvasGlyph(w / 2, w / 2, 0.8, 0.8, ctx => centeredText(ctx, text, fretFont(FRET_SIZE)));
+    }
     // A time signature number (one or more digits), centered.
     case "time": return canvasGlyph(2.2, 2.2, 1.2, 1.2, ctx => {
       const text = [...a].map(d => timeSigDigit(Number(d))).join("");
@@ -176,6 +186,34 @@ function build(kind) {
     case "glow": return glowGlyph();
     default: throw new Error(`unknown glyph ${kind}`);
   }
+}
+
+// "TAB" written down the start of a tab staff, sized to its height.
+function tabClef(ctx, lines) {
+  const span = (lines - 1) * 1.5; // TAB_GAP
+  const step = span * 0.31;
+  ["T", "A", "B"].forEach((letter, i) => centeredText(ctx, letter, `bold ${span * 0.36 * PX}px ${TEXT_FONT}`, 1.0, step * (1 - i)));
+}
+
+const fretFont = size => FRET_FONT.replace("1px", `${size * PX}px`);
+let fretProbe = null;
+// Width in staff spaces of a fret number (for gaps in the tab lines, and spacing marks around it).
+export function fretWidth(text) {
+  fretProbe ??= document.createElement("canvas").getContext("2d");
+  fretProbe.font = fretFont(FRET_SIZE);
+  return fretProbe.measureText(text).width / PX;
+}
+
+// Draws ordinary text with its ink centered on (x, y) staff spaces.
+function centeredText(ctx, text, font, x = 0, y = 0) {
+  ctx.save();
+  const m = ctx.getTransform();
+  ctx.setTransform(1, 0, 0, 1, m.e + x * PX, m.f - y * PX);
+  ctx.font = font;
+  const t = ctx.measureText(text);
+  ctx.fillText(text, (t.actualBoundingBoxLeft - t.actualBoundingBoxRight) / 2,
+    (t.actualBoundingBoxAscent - t.actualBoundingBoxDescent) / 2);
+  ctx.restore();
 }
 
 // Width in staff spaces of a lyric syllable (for spacing notes so lyrics don't collide).

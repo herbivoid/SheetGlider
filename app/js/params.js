@@ -30,6 +30,7 @@ export const params = {
   tails: true,          // duration tails on long notes
   tailMin: 2,           // beats (quarter notes): half notes and longer get a tail
   tailOpacity: 0,       // the bar itself; 0 = only its light shows, once the character reaches it
+  tabRhythm: "auto",    // guitar tab stems & beams: "auto" (unless a standard staff shows them), "show", "hide"
   // Reveal: the notation starts hidden and appears just ahead of the character
   reveal: false,
   revealAhead: 6,       // staff spaces ahead of the character where it starts to appear

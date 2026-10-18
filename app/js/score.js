@@ -3,16 +3,18 @@
 // ("beats" below); tempos are quarter notes per minute.
 //
 // raw: {
-//   title, staves: [{ clef }], keyFifths, timeSig: [num, den],
+//   title, staves: [{ clef, lines?, tuning? }], keyFifths, timeSig: [num, den],
 //   tempo: [{ beat, bpm }], bars: [beat of each barline], endBeat,
 //   notes: [{ staff, start, dur, type, dots, step, alter, octave, tieStart, tieStop }],
 //   rests: [{ staff, start, dur, type, dots, measureRest }],
 // }
+// A guitar tab staff has clef "tab", its number of lines and its tuning (MIDI,
+// lowest string first); its notes carry tab: { string, fret, hidden, paren, bend }.
 
 const STEPS = "CDEFGAB";
 const STEP_SEMITONES = [0, 2, 4, 5, 7, 9, 11];
 // Diatonic index (octave * 7 + step) of each clef's middle line.
-const CLEF_MIDDLE_LINE = { treble: 4 * 7 + 6, bass: 3 * 7 + 1, alto: 4 * 7 + 0, tenor: 3 * 7 + 5 };
+const CLEF_MIDDLE_LINE = { treble: 4 * 7 + 6, treble8vb: 3 * 7 + 6, bass: 3 * 7 + 1, alto: 4 * 7 + 0, tenor: 3 * 7 + 5 };
 const SHARP_ORDER = "FCGDAEB";
 
 // [beats, note type, dots]
@@ -76,6 +78,29 @@ export function staffPosition({ step, octave }, clef) {
   return octave * 7 + STEPS.indexOf(step) - (CLEF_MIDDLE_LINE[clef] ?? CLEF_MIDDLE_LINE.treble);
 }
 
+// Guitar tab: strings are TAB_GAP staff spaces apart, string 1 (the highest) on top.
+export const TAB_GAP = 1.5;
+const STANDARD_TUNING = [40, 45, 50, 55, 59, 64];
+export const isTab = staffDef => staffDef?.clef === "tab";
+export const stringV = (string, lines) => ((lines - 1) / 2 - (string - 1)) * TAB_GAP;
+// From a staff's middle to its outer lines, in staff spaces.
+export const staffHalf = staffDef => (isTab(staffDef) ? ((staffDef.lines ?? 6) - 1) / 2 * TAB_GAP : 2);
+// How far above its string the character stands on a fret number (half-spaces), so it stays readable.
+const FRET_LIFT = 1.4;
+
+// String and fret for a note on a tab staff: from the file, or the lowest fret that plays it.
+function tabPlace(n, def, midi) {
+  const lines = def.lines ?? 6;
+  if (n.tab?.string >= 1 && n.tab.string <= lines && n.tab.fret >= 0) return { ...n.tab };
+  const tuning = def.tuning?.length === lines ? def.tuning : STANDARD_TUNING.slice(-lines);
+  let best = { string: lines, fret: Math.max(0, midi - tuning[0]) };
+  tuning.forEach((open, i) => {
+    const fret = midi - open;
+    if (fret >= 0 && fret < best.fret) best = { string: lines - i, fret };
+  });
+  return best;
+}
+
 export function keyAlter(step, fifths) {
   if (fifths > 0) return SHARP_ORDER.indexOf(step) < fifths ? 1 : 0;
   if (fifths < 0) return [...SHARP_ORDER].reverse().indexOf(step) < -fifths ? -1 : 0;
@@ -113,9 +138,12 @@ export function finalizeScore(raw, tempoScale = 1) {
 
   const makeNote = (n, i) => {
     const pitch = { step: n.step, alter: n.alter ?? 0, octave: n.octave };
+    const def = raw.staves[n.staff] ?? raw.staves[0];
+    const tab = isTab(def) ? tabPlace(n, def, midiOf(pitch)) : null;
+    const pos = tab ? 2 * stringV(tab.string, def.lines ?? 6) : staffPosition(pitch, clefAt(n.staff, n.start));
     return {
       staff: n.staff, start: n.start, dur: n.dur ?? 0, type: n.type, dots: n.dots ?? 0, pitch,
-      midi: midiOf(pitch), pos: staffPosition(pitch, clefAt(n.staff, n.start)),
+      midi: midiOf(pitch), pos, tab, land: pos + (tab ? FRET_LIFT : 0), // land: where the character stands
       el: n.el ?? `n${i}`, voice: n.voice ?? "1",
       tieFromPrev: !!n.tieStop, tieToNext: !!n.tieStart,
       stem: n.stem ?? null, beams: n.beams ?? null, tuplet: n.tuplet ?? null,
@@ -147,7 +175,7 @@ export function finalizeScore(raw, tempoScale = 1) {
   for (const [n] of ordered) {
     const key = `${n.staff}:${barIndex(n.start)}:${n.pitch.step}${n.pitch.octave}`;
     const current = state.has(key) ? state.get(key) : keyAlter(n.pitch.step, keyAt(n.start));
-    n.accidental = n.pitch.alter !== current && !n.tieFromPrev ? n.pitch.alter : null;
+    n.accidental = n.pitch.alter !== current && !n.tieFromPrev && !n.tab ? n.pitch.alter : null;
     state.set(key, n.pitch.alter);
   }
 
@@ -199,6 +227,7 @@ export function finalizeScore(raw, tempoScale = 1) {
     elements: elementList,
     beamGroups,
     slurs: raw.slurs ?? [],
+    techniques: raw.techniques ?? [], // tab: hammer-ons, pull-offs, slides
     tuplets: raw.tuplets ?? [],
     dynamics: raw.dynamics ?? [],
     wedges: raw.wedges ?? [],

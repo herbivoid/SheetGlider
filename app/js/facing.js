@@ -13,6 +13,10 @@ import * as THREE from "three";
 //
 // `k` blends the two: 0 = printed, 1 = billboard. Glyphs use a user setting
 // ("edge-on readability"); the character uses 1.
+//
+// `upright` (text, numbers): never mirrored or upside down. Instead of
+// flipping with the staff, the glyph stays the right way up on screen, reading
+// left to right, and only tilts with the staff's direction.
 
 const _p0 = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
@@ -37,7 +41,7 @@ function screenDelta(camera, P, dir, out) {
 // Writes the quad's x/y axes (world-space vectors) into outX/outY.
 // tilt (radians) rotates the billboard within the screen, in its own frame.
 // Returns the signed facing of the staff's up direction (-1..1) for callers that care.
-export function quadAxes(camera, P, T, U, k, flipWidth, outX, outY, tilt = 0) {
+export function quadAxes(camera, P, T, U, k, flipWidth, outX, outY, tilt = 0, upright = false) {
   _right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
   _up.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
 
@@ -57,11 +61,25 @@ export function quadAxes(camera, P, T, U, k, flipWidth, outX, outY, tilt = 0) {
   } else {
     xx = 1; xy = 0;
   }
+  // Upright text reads left to right even where the staff runs leftward on screen.
+  const along = upright && xx < 0 ? -1 : 1;
+  xx *= along;
+  xy *= along;
   // Screen normal to the staff direction, and how much of "up the staff" shows along it.
   const nx = -xy;
   const ny = xx;
   const c = (sU.x * nx + sU.y * ny) / unit;
   const sign = c < 0 ? -1 : 1;
+  if (upright) {
+    // Always the screen normal (no card-flip); the printed part turns to agree with it.
+    outX.copy(_right).multiplyScalar(xx).addScaledVector(_up, xy);
+    outY.copy(_right).multiplyScalar(nx).addScaledVector(_up, ny);
+    if (k < 1) {
+      outX.multiplyScalar(k).addScaledVector(T, (1 - k) * along);
+      outY.multiplyScalar(k).addScaledVector(U, (1 - k) * sign);
+    }
+    return c;
+  }
   const f = THREE.MathUtils.smoothstep(Math.abs(c), 0, Math.max(1e-4, flipWidth));
 
   // Billboard frame in screen space, tilted in its own (possibly flipped) frame.

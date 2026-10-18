@@ -5,7 +5,8 @@ import { placeQuad, quadAxes } from "./facing.js";
 import { CHANGE_PAD, changesAt, engrave, keySignatureGlyphs } from "./engrave.js";
 import { layoutSpanners } from "./spanners.js";
 import { layoutExpression } from "./expression.js";
-import { DEFAULT_LOUDNESS } from "./score.js";
+import { layoutTab } from "./tab.js";
+import { DEFAULT_LOUDNESS, isTab, staffHalf, stringV } from "./score.js";
 
 // Draws everything on the ribbon. The notation itself is laid out flat by
 // engrave.js / spanners.js; here it's mapped onto the ribbon:
@@ -48,7 +49,7 @@ function patchReveal(shader, uniforms) {
 export function headerLayout(score) {
   const clefX = 0.8;
   const keyX = clefX + METRICS.clef + 0.5;
-  const nKey = Math.abs(score.keyFifths);
+  const nKey = score.staves.some(st => !isTab(st)) ? Math.abs(score.keyFifths) : 0; // tab shows no key
   const timeX = keyX + nKey * METRICS.keyAccidental + (nKey ? 0.6 : 0) + METRICS.timeSig / 2;
   return { clefX, keyX, timeX, width: timeX + METRICS.timeSig / 2 + 2.2 };
 }
@@ -77,12 +78,25 @@ export class StaffView {
     this.inkMaterial = this.revealing(new THREE.MeshBasicMaterial({ color: params.noteColor, side: THREE.DoubleSide, transparent: true }));
     this.header = headerLayout(score);
     this.sEnd = this.sOf(score.endBeat) + 3;
+    // Tab rhythm (stems below the tab): "auto" shows it unless a standard staff already does.
+    this.tabRhythm = params.tabRhythm === "show" || (params.tabRhythm === "auto" && score.staves.every(isTab));
     this.frame = makeFrame();
     this.build();
   }
 
   sOf(beat) { return this.header.width + this.spacing.x(beat); }
   staffCenter(staff) { return -staff * STAFF_GAP; }
+  staffTop(staff) { return this.staffCenter(staff) + staffHalf(this.score.staves[staff]); }
+  staffBottom(staff) { return this.staffCenter(staff) - staffHalf(this.score.staves[staff]); }
+
+  // [lowest, highest] height (staff spaces) that should stay in view.
+  vRange() {
+    const staves = this.score.staves;
+    const last = staves.length - 1;
+    const below = isTab(staves[last]) && this.tabRhythm ? 4.5 : 1;
+    const above = isTab(staves[0]) ? 2.5 : 1; // room for bend arrows
+    return [this.staffBottom(last) - below, this.staffTop(0) + above];
+  }
 
   revealing(material) {
     material.customProgramCacheKey = () => "sheetglider-reveal";
@@ -94,24 +108,28 @@ export class StaffView {
     const { score, params, header } = this;
     const lw = params.lineThickness / 2;
     const n = score.staves.length;
-    const top = 2;
-    const bottom = this.staffCenter(n - 1) - 2;
+    const top = this.staffTop(0);
+    const bottom = this.staffBottom(n - 1);
 
-    // Staff lines and the opening clef / key / time signature.
+    // Staff lines (tab lines come later, with gaps behind the fret numbers) and
+    // the opening clef / key / time signature.
     score.staves.forEach((staffDef, staff) => {
       const c = this.staffCenter(staff);
-      for (let l = -2; l <= 2; l++) this.tube(0, this.sEnd, c + l, c + l, lw, this.lineMaterial);
-      this.addGlyph(`clef:${staffDef.clef}`, header.clefX, c);
-      keySignatureGlyphs(score.keyFifths, staffDef.clef).forEach(([name, pos], i) => {
-        this.addGlyph(`acc:${name}`, header.keyX + (i + 1) * METRICS.keyAccidental - 0.15, c + pos / 2);
-      });
-      this.addGlyph(`time:${score.timeSig[0]}`, header.timeX, c + 1);
-      this.addGlyph(`time:${score.timeSig[1]}`, header.timeX, c - 1);
+      if (isTab(staffDef)) {
+        this.addGlyph(`clef:tab:${staffDef.lines ?? 6}`, header.clefX, c);
+      } else {
+        for (let l = -2; l <= 2; l++) this.tube(0, this.sEnd, c + l, c + l, lw, this.lineMaterial);
+        this.addGlyph(`clef:${staffDef.clef}`, header.clefX, c);
+        keySignatureGlyphs(score.keyFifths, staffDef.clef).forEach(([name, pos], i) => {
+          this.addGlyph(`acc:${name}`, header.keyX + (i + 1) * METRICS.keyAccidental - 0.15, c + pos / 2);
+        });
+      }
+      this.timeSignature(score.timeSig, header.timeX, staff);
     });
 
-    // System start line (+ brace for several staves).
+    // System start line (+ brace for a piano's staves).
     this.tube(0, 0, bottom, top, lw, this.lineMaterial);
-    if (n > 1) this.addGlyph(`brace:${top - bottom}`, 0, (top + bottom) / 2);
+    if (n > 1 && !score.staves.some(isTab)) this.addGlyph(`brace:${top - bottom}`, 0, (top + bottom) / 2);
 
     // Barlines (plain, final, or repeat signs), with any clef/key/time changes just after them.
     const key = b => Math.round(b * 960);
@@ -120,8 +138,9 @@ export class StaffView {
     for (const r of score.repeats) repeats.set(key(r.beat), { ...repeats.get(key(r.beat)), [r.dir]: true });
     const barSet = new Set(score.bars.map(key));
     const line = (s, thick) => this.tube(s, s, bottom, top, thick ? 0.25 : lw * 1.2, this.lineMaterial);
-    const dots = s => score.staves.forEach((_, st) => {
-      for (const dv of [-0.5, 0.5]) this.addGlyph("dot", s, this.staffCenter(st) + dv);
+    const dots = s => score.staves.forEach((def, st) => {
+      const dv = isTab(def) ? 1.5 : 0.5; // in the spaces either side of the middle
+      for (const d of [-dv, dv]) this.addGlyph("dot", s, this.staffCenter(st) + d);
     });
     for (const bar of [0, ...score.bars]) {
       const rep = repeats.get(key(bar));
@@ -157,9 +176,11 @@ export class StaffView {
     // Notes, rests, beams, ties, slurs, tuplets, dynamics, articulations, lyrics, tails.
     const sOf = b => this.sOf(b);
     const staffCenter = st => this.staffCenter(st);
-    const layout = engrave(score, { sOf, staffCenter, lineThickness: params.lineThickness });
+    const layout = engrave(score, { sOf, staffCenter, lineThickness: params.lineThickness, tabRhythm: this.tabRhythm });
     layoutSpanners(layout, score);
+    layoutTab(layout, score, { sOf, staffCenter });
     layoutExpression(layout, score, { sOf, staffCenter, params });
+    score.staves.forEach((def, staff) => { if (isTab(def)) this.tabLines(staff, def, layout.lineGaps, lw); });
     for (const vis of layout.visuals) this.addVisual(vis);
     for (const g of layout.glyphs) this.addGlyph(g.kind, g.s, g.v, g.scale, g.tint);
     for (const t of layout.tubes) {
@@ -180,6 +201,29 @@ export class StaffView {
     }
   }
 
+  // A tab staff's lines, broken where fret numbers sit on them.
+  tabLines(staff, def, gaps, lw) {
+    const lines = def.lines ?? 6;
+    for (let string = 1; string <= lines; string++) {
+      const v = this.staffCenter(staff) + stringV(string, lines);
+      const here = gaps.filter(g => g.staff === staff && Math.abs(g.v - v) < 1e-3).sort((a, b) => a.s0 - b.s0);
+      let s = 0;
+      for (const g of here) {
+        if (g.s0 > s + 0.35) this.tube(s, g.s0, v, v, lw, this.lineMaterial); // (scraps would look like dots)
+        s = Math.max(s, g.s1);
+      }
+      if (this.sEnd > s + 0.35) this.tube(s, this.sEnd, v, v, lw, this.lineMaterial);
+    }
+  }
+
+  // A time signature; a little larger on tab, whose lines are further apart.
+  timeSignature([num, den], s, staff) {
+    const k = isTab(this.score.staves[staff]) ? 1.25 : 1;
+    const c = this.staffCenter(staff);
+    this.addGlyph(`time:${num}`, s, c + k, k);
+    this.addGlyph(`time:${den}`, s, c - k, k);
+  }
+
   // Where the barline before `bar` (a beat) sits: before the room taken by
   // changes, accidentals and grace notes in front of the bar's first notes.
   barlineS(bar) {
@@ -190,7 +234,7 @@ export class StaffView {
   // 1st/2nd endings: a bracket over their bars with the number, open at the end of the last one.
   drawVoltas() {
     const voltas = [...this.score.voltas].sort((a, b) => a.start - b.start);
-    const top = this.staffCenter(0) + 2;
+    const top = this.staffTop(0) + (isTab(this.score.staves[0]) ? 1.8 : 0); // tab: above bend arrows
     const staffHigh = Math.max(top, ...this.score.notes.filter(nt => nt.staff === 0).map(nt => nt.pos / 2));
     // With lyrics under the staff, dynamics move above it (expression.js): go above those too.
     const P = this.params;
@@ -246,23 +290,20 @@ export class StaffView {
   // Clef / key / time signature change, starting at s.
   drawChange(change, s) {
     let x = s;
-    for (const c of change.clefs) this.addGlyph(`clef:${c.clef}`, x, this.staffCenter(c.staff), 0.75);
+    for (const c of change.clefs) {
+      if (!isTab(this.score.staves[c.staff]) && c.clef !== "tab") this.addGlyph(`clef:${c.clef}`, x, this.staffCenter(c.staff), 0.75);
+    }
     if (change.clefs.length) x += 2.6;
     if (change.key) {
-      this.score.staves.forEach((_, staff) => {
+      this.score.staves.forEach((def, staff) => {
+        if (isTab(def)) return;
         const clef = this.score.clefAt(staff, change.beat);
         const items = keySignatureGlyphs(change.key.to, clef, change.key.cancel, change.key.from > 0);
         items.forEach(([name, pos], i) => this.addGlyph(`acc:${name}`, x + 0.5 + (i + 1) * 1.0 - 0.15, this.staffCenter(staff) + pos / 2));
       });
       x += (change.key.cancel.length + Math.abs(change.key.to)) * 1.0 + 0.8;
     }
-    if (change.time) {
-      this.score.staves.forEach((_, staff) => {
-        const c = this.staffCenter(staff);
-        this.addGlyph(`time:${change.time[0]}`, x + 1.3, c + 1);
-        this.addGlyph(`time:${change.time[1]}`, x + 1.3, c - 1);
-      });
-    }
+    if (change.time) this.score.staves.forEach((_, staff) => this.timeSignature(change.time, x + 1.3, staff));
   }
 
   addVisual(vis) {
@@ -300,7 +341,9 @@ export class StaffView {
     mesh.matrixAutoUpdate = false;
     mesh.renderOrder = 1;
     this.group.add(mesh);
-    this.quads.push({ mesh, s, v, g, scale, tint });
+    // Numbers and words stay readable where the staff turns upside down (see facing.js).
+    const upright = /^(fret|text|dyn|tuplet):/.test(kind);
+    this.quads.push({ mesh, s, v, g, scale, tint, upright });
   }
 
   tubeMaterial(tint) {
@@ -427,7 +470,7 @@ export class StaffView {
       q.mesh.material.opacity = shown;
       this.ribbon.frameAt(q.s, frame);
       at.copy(frame.P).addScaledVector(frame.U, q.v);
-      quadAxes(camera, at, frame.T, frame.U, params.readability, params.flipSharpness, X, Y);
+      quadAxes(camera, at, frame.T, frame.U, params.readability, params.flipSharpness, X, Y, 0, q.upright);
       placeQuad(q.mesh, at, X, Y, q.g.w * q.scale, q.g.h * q.scale, q.g.ax, q.g.ay, camera);
       if (q.tint) {
         const vis = this.visuals.get(q.tint);

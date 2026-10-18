@@ -5,7 +5,7 @@ const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
 // A curved band (tie or slur) from (x0, y0) to (x1, y1) bulging `height` toward
 // `side` (+1 up, -1 down), thick in the middle and thin at the ends.
-function arc(x0, y0, x1, y1, height, side, thick) {
+export function arc(x0, y0, x1, y1, height, side, thick) {
   const pts = [];
   const n = 24;
   for (let i = 0; i <= n; i++) {
@@ -41,7 +41,7 @@ export function layoutSpanners(out, score) {
       const mid = (chord.length - 1) / 2;
       side = i > mid ? 1 : i < mid ? -1 : -el.dir;
     }
-    const v = el.c + n.pos / 2 + side * 0.55;
+    const v = el.c + n.pos / 2 + side * (el.tab ? 0.8 : 0.55); // tab: clear of the fret number
     const x0 = noteX(n) + 0.45;
     const x1 = target ? noteX(target) - 0.45 : x0 + 1.6;
     const len = Math.max(0.6, x1 - x0);
@@ -59,8 +59,8 @@ export function layoutSpanners(out, score) {
       const vs = el.e.notes.map(n => el.c + n.pos / 2);
       return [el.s, (side > 0 ? Math.max(...vs) : Math.min(...vs)) + side * pad];
     };
-    const [x0, y0] = anchor(a, 0.7);
-    const [x1, y1] = anchor(b, 0.7);
+    const [x0, y0] = anchor(a, a.tab ? 0.95 : 0.7);
+    const [x1, y1] = anchor(b, b.tab ? 0.95 : 0.7);
     if (x1 - x0 < 0.5) continue;
     const line = x => y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
     const len = x1 - x0;

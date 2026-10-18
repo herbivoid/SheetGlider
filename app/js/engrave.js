@@ -1,5 +1,6 @@
-import { flagCount } from "./score.js";
-import { METRICS, lyricWidth } from "./glyphs.js";
+import { flagCount, isTab } from "./score.js";
+import { METRICS, fretWidth, lyricWidth } from "./glyphs.js";
+import { fretText, tabElement } from "./tab.js";
 
 // Notation layout in the staff's own flat coordinates: s = distance along the
 // staff, v = height (both in staff spaces; v = 0 is staff 0's middle line).
@@ -8,6 +9,7 @@ import { METRICS, lyricWidth } from "./glyphs.js";
 //   tubes:  { s0, v0, s1, v1, r, tint }      stems, ledger lines, brackets, grace slashes
 //   bands:  [{ s, va, vb }]                  filled shapes between two edges (beams, ties, slurs)
 //   visuals: { key, note, s, v, beat, offset, glow, scale }  notes that light up when played
+//   lineGaps: { staff, v, s0, s1 }           breaks in tab staff lines behind fret numbers
 
 // Notehead sizes depend on the music font; syncFontMetrics() refreshes them.
 let HEAD_HALF = 0.59;
@@ -81,7 +83,26 @@ export function measureExtras(score, params) {
   for (const c of changesAt(score)) add(c.beat, c.width);
   for (const r of score.repeats) add(r.beat, 1.2);
   if (params.showLyrics) lyricRoom(score, params, add);
+  tabRoom(score, params, add);
   return { extras, before: beat => before.get(beatKey(beat)) ?? 0 };
+}
+
+// Extra room so neighbouring fret numbers on a tab staff never touch
+// (estimated from the unsmoothed spacing, like lyricRoom).
+function tabRoom(score, params, add) {
+  const last = new Map(); // staff -> { start, half }
+  for (const e of score.elements) {
+    if (!isTab(score.staves[e.staff])) continue;
+    const shown = e.notes.filter(n => !n.tab.hidden);
+    let half = Math.max(0.3, ...shown.map(n => fretWidth(fretText(n)) / 2));
+    const prev = last.get(e.staff);
+    if (prev && e.start - prev.start < 1e-6) half = Math.max(half, prev.half); // another voice, same time
+    last.set(e.staff, { start: e.start, half });
+    if (!prev || e.start - prev.start < 1e-6) continue;
+    const need = prev.half + half + 0.9;
+    const have = params.quarterWidth * Math.pow(e.start - prev.start, params.spacingExponent);
+    if (need > have) add(e.start, need - have);
+  }
 }
 
 // Extra room where two neighbouring syllables wouldn't fit side by side
@@ -112,7 +133,8 @@ export function changesAt(score) {
     return byBeat.get(beatKey(beat));
   };
   for (const c of score.clefChanges) { at(c.beat).clefs.push(c); }
-  for (const k of score.keyChanges) {
+  const keyShown = score.staves.some(st => !isTab(st)); // tab staves don't show key signatures
+  for (const k of keyShown ? score.keyChanges : []) {
     const prev = score.keyAt(k.beat - 1e-3);
     at(k.beat).key = { from: prev, to: k.fifths, cancel: cancelled(prev, k.fifths) };
   }
@@ -136,9 +158,10 @@ function cancelled(from, to) {
   return [...steps.slice(keep, Math.abs(from))];
 }
 
-export function engrave(score, { sOf, staffCenter, lineThickness }) {
+// tabRhythm: whether tab staves show rhythm (stems and beams below the staff).
+export function engrave(score, { sOf, staffCenter, lineThickness, tabRhythm }) {
   syncFontMetrics();
-  const out = { glyphs: [], tubes: [], bands: [], visuals: [], info: new Map() };
+  const out = { glyphs: [], tubes: [], bands: [], visuals: [], info: new Map(), lineGaps: [] };
   const ledgerR = lineThickness * 0.6;
 
   // Stem directions: shared across a beam group.
@@ -150,6 +173,12 @@ export function engrave(score, { sOf, staffCenter, lineThickness }) {
   });
 
   for (const e of score.elements) {
+    const def = score.staves[e.staff];
+    if (isTab(def)) {
+      const inf = tabElement(out, e, { s: sOf(e.start), c: staffCenter(e.staff), def, rhythm: tabRhythm, beamed: groupOf.has(e.id) });
+      out.info.set(e.id, inf);
+      continue;
+    }
     const whole = e.type === "whole";
     const dir = whole ? 1 : dirOf.get(e.id) ?? stemDir([e]);
     const c = staffCenter(e.staff);
@@ -210,7 +239,10 @@ export function engrave(score, { sOf, staffCenter, lineThickness }) {
     });
   }
 
-  score.beamGroups.forEach(g => layoutBeams(out, g.map(e => out.info.get(e.id))));
+  score.beamGroups.forEach(g => {
+    const items = g.map(e => out.info.get(e.id));
+    if (!items.some(i => i.noRhythm)) layoutBeams(out, items);
+  });
 
   // Stems and flags (beamed stems got their tip from the beam).
   for (const inf of out.info.values()) {
@@ -299,6 +331,7 @@ function layoutBeams(out, items) {
 function layoutGraces(out, score, { sOf, staffCenter, ledgerR }) {
   for (const g of score.graces) {
     const c = staffCenter(g.staff);
+    if (g.tab) { tabGrace(out, g, c, sOf); continue; }
     // Everything belonging to the main note(s) starts at their left edge (accidentals included).
     let edge = sOf(g.start) - HEAD_HALF;
     for (const inf of out.info.values()) {
@@ -323,11 +356,21 @@ function layoutGraces(out, score, { sOf, staffCenter, ledgerR }) {
   }
 }
 
+// A grace note on a tab staff: a small fret number just before its main note.
+function tabGrace(out, g, c, sOf) {
+  const s = sOf(g.start) - 1.1 - (g.groupSize - g.order - 1) * GRACE_STEP;
+  const v = c + g.pos / 2;
+  const key = `g${g.id}`;
+  out.glyphs.push({ kind: `fret:${fretText(g)}`, s, v, scale: GRACE, tint: key });
+  out.visuals.push({ key, note: g, s, v, beat: g.start, offset: -0.07 * (g.groupSize - g.order), glow: true, scale: GRACE });
+  out.lineGaps.push({ staff: g.staff, v, s0: s - 0.5, s1: s + 0.5 });
+}
+
 // Key signature accidentals (as [glyph name, half-space position]) for a clef,
 // optionally preceded by naturals cancelling the previous key.
 const KEY_SHARPS = [4, 1, 5, 2, -1, 3, 0];
 const KEY_FLATS = [0, 3, -1, 2, -2, 1, -3];
-const CLEF_KEY_SHIFT = { treble: 0, bass: -2, alto: -1, tenor: 1 };
+const CLEF_KEY_SHIFT = { treble: 0, treble8vb: 0, bass: -2, alto: -1, tenor: 1 };
 const STEP_OF_SHARP = "FCGDAEB";
 const STEP_OF_FLAT = "BEADGCF";
 export function keySignatureGlyphs(fifths, clef, cancel = [], cancelFromSharps = true) {

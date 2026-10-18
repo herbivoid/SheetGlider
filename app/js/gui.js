@@ -9,6 +9,7 @@ export const CHOICES = {
   musicFont: Object.keys(MUSIC_FONTS),
   ghosts: ["off", "same staff", "all staves"],
   sparkStyle: ["light", "paint"],
+  tabRhythm: ["auto", "show", "hide"],
 };
 
 // The settings panel. `actions` supplies the callbacks:
@@ -71,6 +72,7 @@ export function buildGui(params, actions) {
   notation.add(params, "tails").name("duration tails").onChange(re);
   notation.add(params, "tailMin", 0.5, 8, 0.25).name("tails on notes ≥ (beats)").onFinishChange(re);
   notation.add(params, "tailOpacity", 0, 1, 0.01).name("tail bar opacity");
+  notation.add(params, "tabRhythm", CHOICES.tabRhythm).name("tab rhythm (stems)").onChange(re);
   notation.close();
 
   const reveal = gui.addFolder("Reveal");
