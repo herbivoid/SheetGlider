@@ -124,7 +124,7 @@ function timeline(initial, changes, pick) {
 
 // Turns a raw score into the model the renderer uses. `tempoScale` multiplies
 // every tempo (the "bpm" setting).
-export function finalizeScore(raw, tempoScale = 1) {
+export function finalizeScore(raw, tempoScale = 1, { keyAccidentals = false } = {}) {
   const bars = [...raw.bars].sort((a, b) => a - b);
   const barIndex = beat => {
     let i = 0;
@@ -173,15 +173,20 @@ export function finalizeScore(raw, tempoScale = 1) {
 
   // Accidentals: show one when the alteration differs from what's in force at
   // that staff position in this bar (key signature, or an earlier accidental).
+  // With keyAccidentals, the key's sharps and flats are also written on the
+  // notes (once per bar, like any accidental), for viewers far from the key signature.
   // Grace notes come just before the main notes they share a start with.
   const state = new Map();
   const ordered = [...graces.map(g => [g, 0]), ...notes.map(n => [n, 1])]
     .sort((a, b) => a[0].start - b[0].start || a[1] - b[1]);
   for (const [n] of ordered) {
     const key = `${n.staff}:${barIndex(n.start)}:${n.pitch.step}${n.pitch.octave}`;
-    const current = state.has(key) ? state.get(key) : keyAlter(n.pitch.step, keyAt(n.start));
-    n.accidental = n.pitch.alter !== current && !n.tieFromPrev && !n.tab ? n.pitch.alter : null;
-    state.set(key, n.pitch.alter);
+    const alter = n.pitch.alter;
+    const needed = state.has(key)
+      ? alter !== state.get(key)
+      : alter !== keyAlter(n.pitch.step, keyAt(n.start)) || (keyAccidentals && alter !== 0);
+    n.accidental = needed && !n.tieFromPrev && !n.tab ? alter : null;
+    state.set(key, alter);
   }
 
   // Elements: a single note, or all the notes of a chord.

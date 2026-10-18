@@ -23,6 +23,7 @@ export const params = {
   sparkWhiteness: 0.15, // how far sparks may be mixed toward white (0 = all glow color)
   sparkBrightness: 1,   // light style only
   // Notation
+  keyAccidentals: false, // also write the key signature's sharps/flats on the notes
   showDynamics: true,
   showArticulations: true,
   showLyrics: true,

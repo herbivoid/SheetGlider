@@ -48,7 +48,9 @@ Notation drawn:
 - lyrics (all verses), with hyphens, lighting up as they're sung
 - repeat signs and 1st/2nd endings
 
-Each of these can be switched off under **Notation**: *articulations & ornaments* covers the marks on notes, *text & lines* the rest. Not drawn: chord symbols, 8va lines, two-note tremolos.
+Each of these can be switched off under **Notation**: *articulations & ornaments* covers the marks on notes, *text & lines* the rest.
+
+On a long ribbon, viewers may never see the key signature at the start (or it's tiny in the distance). **Write key's ♯/♭ on notes** (under Notation) also writes the key's sharps and flats on the notes themselves, once per bar like any accidental. The key signature stays at the start. Not drawn: chord symbols, 8va lines, two-note tremolos.
 
 **Guitar tab:** a tablature staff is drawn as tab: fret numbers on the strings, with the character landing on top of them. Also drawn:
 - hammer-ons and pull-offs (an arc marked H or P)

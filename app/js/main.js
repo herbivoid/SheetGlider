@@ -46,7 +46,7 @@ function rebuild() {
     world.particles.dispose();
   }
   applyFog(scene, params);
-  const score = finalizeScore(raw, params.bpm / rawBpm());
+  const score = finalizeScore(raw, params.bpm / rawBpm(), { keyAccidentals: params.keyAccidentals });
   const extras = measureExtras(score, params);
   const spacing = buildSpacing(score, {
     quarterWidth: params.quarterWidth, exponent: params.spacingExponent,

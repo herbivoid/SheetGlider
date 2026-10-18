@@ -65,6 +65,7 @@ export function buildGui(params, actions) {
   look.close();
 
   const notation = gui.addFolder("Notation");
+  notation.add(params, "keyAccidentals").name("write key's ♯/♭ on notes").onChange(re);
   notation.add(params, "showDynamics").name("dynamics & hairpins").onChange(re);
   notation.add(params, "showArticulations").name("articulations & ornaments").onChange(re);
   notation.add(params, "showText").name("text & lines (let ring, tempo…)").onChange(re);
