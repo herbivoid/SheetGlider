@@ -46,7 +46,7 @@ export const params = {
   barGap: 2.2,
   repeats: true,      // play repeats (and 1st/2nd endings) as performed
   // Ribbon
-  preset: "twist",
+  preset: "flat",
   readability: 0.6,
   flipSharpness: 0.2,
   ...SHAPE_TWEAK_DEFAULTS,

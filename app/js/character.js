@@ -45,7 +45,7 @@ export class CharacterView {
   constructor({ character, score, ribbon, params, sOf, follow }) {
     Object.assign(this, { character, score, ribbon, params, sOf });
     this.targets = pickTargets(score, follow ?? params.follow);
-    this.runs = findRuns(this.targets, params.fastNote, params.minRunNotes);
+    this.runs = surfRuns(this.targets, params);
     for (const run of this.runs) {
       const pts = this.targets.slice(run.a, run.b + 1);
       run.t0 = pts[0].on;
@@ -108,8 +108,8 @@ export class CharacterView {
 
     const cur = T[lo];
     if (cur.run) {
-      // Surfing a fast run: one smooth curve through all its notes, no hops.
-      return { p: cur.run.curve(t), state: "surf", landed: -1, surfing: true };
+      // Surfing a fast run or a slide: one smooth curve through all its notes, no hops.
+      return { p: cur.run.curve(t), state: "surf", landed: -1, surfing: true, bend: this.bendAt(cur, t) };
     }
 
     const next = T[lo + 1];
@@ -137,6 +137,7 @@ export class CharacterView {
       return {
         p: cur.p + l + (l > 0 ? this.bob(t) * (l / P.restLift) : 0),
         state, landed, takeoff, crouching: state === "crouch" && t > takeoff - antic, impact: this.gain(cur),
+        bend: this.bendAt(cur, t),
       };
     }
 
@@ -145,10 +146,21 @@ export class CharacterView {
     const from = cur.p + lift(takeoff) + (resting ? this.bob(takeoff) : 0);
     const arc = P.hopHeight * this.gain(next) * Math.pow(hop / P.hopMax, 0.7) * smooth01(0.06, 0.2, hop);
     const p = from + (next.p - from) * easeInOut(u) + arc * 4 * u * (1 - u);
-    return { p, state: "glide", landed, takeoff, impact: this.gain(cur) };
+    // A bend that was never released relaxes during the hop.
+    return { p, state: "glide", landed, takeoff, impact: this.gain(cur), bend: this.bendAt(cur, t) * (1 - easeInOut(u)) };
   }
 
   bob(t) { return 0.35 * Math.sin(t * Math.PI * 1.6); }
+
+  // How far (semitones) the guitar string under the character is bent at time t.
+  bendAt(target, t) {
+    let v = 0;
+    for (const b of target.bends) {
+      if (t <= b.t0) break;
+      v += (b.to - v) * smooth01(b.t0, b.t1, t);
+    }
+    return v;
+  }
 
   // How strongly to play a note: louder and accented notes get more (1 = normal).
   gain(target) {
@@ -179,6 +191,12 @@ export class CharacterView {
       const w = smooth01(m.takeoff - 0.1, m.takeoff, t);
       sy *= 1 - 0.15 * w * P.squash;
       sx *= 1 + 0.1 * w * P.squash;
+    }
+    if (m.bend) {
+      // Bent up with the string (a full bend = 2 semitones: about 16% taller).
+      const stretch = 1 + 0.08 * Math.max(0, m.bend) * P.squash;
+      sy *= stretch;
+      sx /= Math.sqrt(stretch);
     }
     let tilt = THREE.MathUtils.clamp(vel * 0.012 * P.lean, -0.4, 0.4);
     if (m.surfing) tilt = THREE.MathUtils.clamp(vel * 0.02 * P.lean, -0.5, 0.5) - P.surfLean;
@@ -323,15 +341,23 @@ function chordEvents(score, targets, params) {
 // (or the highest note overall). Tied continuations aren't re-landed.
 function pickTargets(score, follow) {
   const byOnset = new Map();
+  const bent = new Map();  // onset -> a note bending there (maybe another note of the chord)
+  const slides = new Map(); // onset -> elements slid to from there
   for (const n of score.notes) {
-    if (n.tieFromPrev) continue;
     if (follow !== "top" && n.staff !== follow) continue;
+    // A slide can leave from a tied-over note: it counts for the note that was played.
+    const from = n.tieFromPrev ? n.head?.start : n.start;
+    if (n.slideTo && from !== undefined) slides.set(from, (slides.get(from) ?? new Set()).add(n.slideTo.el));
+    if (n.tieFromPrev) continue;
     const prev = byOnset.get(n.start);
     if (!prev || n.land + n.staff * -20 > prev.land + prev.staff * -20) byOnset.set(n.start, n);
+    if (n.bends.length && !bent.has(n.start)) bent.set(n.start, n);
   }
   return [...byOnset.values()]
     .sort((a, b) => a.start - b.start)
     .map(n => ({
+      bends: (bent.get(n.start)?.bends ?? []).map(b => ({ t0: score.timeOf(b.start), t1: score.timeOf(b.end), to: b.to })),
+      slidesTo: slides.get(n.start),
       note: n,
       on: score.timeOf(n.start),
       end: score.timeOf(n.start + n.soundingDur),
@@ -341,6 +367,24 @@ function pickTargets(score, follow) {
       staccato: n.artic.includes("staccato") || n.artic.includes("staccatissimo"),
       fermata: n.fermata,
     }));
+}
+
+// Stretches surfed instead of hopped: fast runs, and slides (glissandos) from
+// one note to the next. Returns { a, b }: first and last target of each.
+function surfRuns(targets, params) {
+  const linked = targets.slice(1).map((next, k) => !!targets[k].slidesTo?.has(next.note.el));
+  for (const r of findRuns(targets, params.fastNote, params.minRunNotes)) {
+    for (let k = r.a; k < r.b; k++) linked[k] = true;
+  }
+  const runs = [];
+  for (let k = 0; k < linked.length; k++) {
+    if (!linked[k]) continue;
+    let j = k;
+    while (j < linked.length && linked[j]) j++;
+    runs.push({ a: k, b: j });
+    k = j;
+  }
+  return runs;
 }
 
 // Runs: at least `minNotes` notes in a row, each starting less than `fast` seconds after the previous.

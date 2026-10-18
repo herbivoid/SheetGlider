@@ -153,6 +153,8 @@ export function finalizeScore(raw, tempoScale = 1) {
   const notes = raw.notes.filter(n => n.dur > 0).map(makeNote)
     .sort((a, b) => a.start - b.start || a.staff - b.staff || b.pos - a.pos);
   notes.forEach((n, i) => { n.id = i; });
+  const slurs = slursAsTies(raw.slurs ?? [], notes);
+  linkGuitarNotes(notes, raw.techniques ?? []);
   const graces = (raw.graces ?? []).map((g, i) => ({ ...makeNote({ ...g, dur: 0 }, `g${i}`), slash: !!g.slash }));
   // Position of each grace note within its group (graces before the same main note).
   const graceGroups = new Map();
@@ -196,19 +198,29 @@ export function finalizeScore(raw, tempoScale = 1) {
     ? explicitBeams(elementList)
     : autoBeams(elementList, bars, timeAt);
 
-  // Tie chains: the first note sounds for the whole chain.
+  // Chains of notes that sound as one (ties; on guitar, bends held or released):
+  // the first note sounds for the whole chain, bending as marked. Its bends are
+  // { start, end, to } in beats, `to` in semitones from its own pitch.
+  const tiedNext = cur => notes.find(m => m.staff === cur.staff && m.midi === cur.midi
+    && m.tieFromPrev && Math.abs(m.start - (cur.start + cur.dur)) < 1e-6);
   for (const n of notes) {
     n.soundingDur = n.dur;
+    n.bends = [];
     if (n.tieFromPrev) continue;
+    let offset = 0;
     let cur = n;
-    while (cur.tieToNext) {
-      const end = cur.start + cur.dur;
-      const nxt = notes.find(m => m.staff === cur.staff && m.midi === cur.midi
-        && m.tieFromPrev && Math.abs(m.start - end) < 1e-6);
+    for (;;) {
+      if (cur.tab?.bend) {
+        offset += cur.tab.bend;
+        n.bends.push({ start: cur.start, end: cur.start + Math.min(cur.dur * 0.6, 0.5), to: offset });
+      }
+      const nxt = cur.continuedBy ?? (cur.tieToNext ? tiedNext(cur) : null);
       if (!nxt) break;
       n.soundingDur += nxt.dur;
+      nxt.head = n; // the note that's actually played
       cur = nxt;
     }
+    if (cur !== n && cur.slideTo) n.slideTo ??= cur.slideTo; // sliding out of a tied-over note
   }
 
   const tempo = tempoMap(raw.tempo, tempoScale);
@@ -226,7 +238,7 @@ export function finalizeScore(raw, tempoScale = 1) {
     graces,
     elements: elementList,
     beamGroups,
-    slurs: raw.slurs ?? [],
+    slurs,
     techniques: raw.techniques ?? [], // tab: hammer-ons, pull-offs, slides
     tuplets: raw.tuplets ?? [],
     dynamics: raw.dynamics ?? [],
@@ -240,6 +252,57 @@ export function finalizeScore(raw, tempoScale = 1) {
     timeOf: tempo.timeOf,
     beatAt: tempo.beatAt,
   };
+}
+
+// A slur joining two notes of the same pitch, back to back, is really a tie
+// (some files write ties that way), so it becomes one. Returns the other slurs.
+function slursAsTies(slurs, notes) {
+  const byEl = new Map();
+  for (const n of notes) {
+    if (!byEl.has(n.el)) byEl.set(n.el, []);
+    byEl.get(n.el).push(n);
+  }
+  return slurs.filter(sl => {
+    const a = byEl.get(sl.from);
+    const b = byEl.get(sl.to);
+    if (!a || !b || Math.abs(a[0].start + a[0].dur - b[0].start) > 1e-6) return true;
+    const pairs = b.map(m => [a.find(n => n.midi === m.midi && n.staff === m.staff), m]);
+    if (pairs.some(([n]) => !n)) return true;
+    for (const [n, m] of pairs) {
+      n.tieToNext = true;
+      m.tieFromPrev = true;
+    }
+    return false;
+  });
+}
+
+// Guitar. A bend's target note (hidden in the tab) and the note a release comes
+// back to (in parentheses) aren't picked again: they continue the bent note
+// (marked tieFromPrev, linked by continuedBy). Slides link their notes
+// (slideTo), and hammer-on / pull-off / slide targets are legato.
+function linkGuitarNotes(notes, techniques) {
+  const last = new Map(); // staff|string -> the latest note on that string
+  for (const n of notes) {
+    if (!n.tab) continue;
+    const key = `${n.staff}|${n.tab.string}`;
+    const prev = last.get(key);
+    last.set(key, n);
+    if (!prev || Math.abs(prev.start + prev.dur - n.start) > 1e-6) continue;
+    const held = n.tab.hidden && (prev.tab.bend || prev.bendHeld);
+    const released = n.tab.paren && prev.tab.bend < 0;
+    if (!held && !released) continue;
+    n.tieFromPrev = true;
+    n.bendHeld = held;
+    prev.continuedBy = n;
+  }
+  const byString = new Map(notes.filter(n => n.tab).map(n => [`${n.el}|${n.tab.string}`, n]));
+  for (const t of techniques) {
+    const a = byString.get(`${t.from}|${t.fromString}`);
+    const b = byString.get(`${t.to}|${t.toString}`);
+    if (!a || !b) continue;
+    if (t.kind === "slide") a.slideTo = b;
+    b.legato = true;
+  }
 }
 
 // How loud each dynamic is, 0..1. Accent-like marks (sf, fz…) only affect the

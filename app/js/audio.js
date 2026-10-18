@@ -1,13 +1,23 @@
 // Tiny synth for hearing the score: live preview, and rendered to a WAV file
 // for export (lined up with the video, lead-in included).
 
+const freq = midi => 440 * 2 ** ((midi - 69) / 12);
+
 function scheduleNotes(ctx, destination, score, fromSec, startAt) {
   const voices = [];
   const sounds = [];
   for (const n of score.notes) {
-    if (n.tieFromPrev) continue; // tied notes sound as one long note
-    const len = (score.timeOf(n.start + n.soundingDur) - score.timeOf(n.start)) * 0.95;
-    sounds.push({ midi: n.midi, on: score.timeOf(n.start), len });
+    if (n.tieFromPrev) continue; // tied notes (and held/released bends) sound as one long note
+    const on = score.timeOf(n.start);
+    let len = (score.timeOf(n.start + n.soundingDur) - on) * 0.95;
+    // Pitch changes while it sounds: guitar bends, and sliding into the next note.
+    const glides = n.bends.map(b => ({ t0: score.timeOf(b.start) - on, t1: score.timeOf(b.end) - on, to: b.to }));
+    if (n.slideTo) {
+      const arrive = score.timeOf(n.slideTo.start) - on;
+      glides.push({ t0: arrive - Math.min(0.2, arrive * 0.4), t1: arrive, to: n.slideTo.midi - n.midi });
+      len = Math.max(len, arrive);
+    }
+    sounds.push({ midi: n.midi, on, len, glides, soft: n.legato });
   }
   for (const g of score.graces) {
     sounds.push({ midi: g.midi, on: score.timeOf(g.start) - 0.07 * (g.groupSize - g.order), len: 0.06 });
@@ -18,12 +28,21 @@ function scheduleNotes(ctx, destination, score, fromSec, startAt) {
     const len = Math.max(0.06, n.len);
     const osc = ctx.createOscillator();
     osc.type = "triangle";
-    osc.frequency.value = 440 * 2 ** ((n.midi - 69) / 12);
     const env = ctx.createGain();
     const t = startAt + on;
+    const f0 = freq(n.midi);
+    osc.frequency.setValueAtTime(f0, t);
+    let f = f0;
+    for (const g of n.glides ?? []) {
+      osc.frequency.setValueAtTime(f, t + g.t0); // hold until the glide starts
+      f = f0 * 2 ** (g.to / 12);
+      osc.frequency.exponentialRampToValueAtTime(f, t + Math.max(g.t1, g.t0 + 0.01));
+    }
+    // Hammer-ons, pull-offs and slide arrivals aren't picked: a softer attack.
+    const peak = n.soft ? 0.55 : 1;
     env.gain.setValueAtTime(0, t);
-    env.gain.linearRampToValueAtTime(1, t + 0.01);
-    env.gain.exponentialRampToValueAtTime(0.5, t + 0.12);
+    env.gain.linearRampToValueAtTime(peak, t + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.5 * Math.min(1, peak * 1.2), t + 0.12);
     env.gain.setValueAtTime(0.5, t + len);
     env.gain.linearRampToValueAtTime(0, t + len + 0.08);
     osc.connect(env).connect(destination);
