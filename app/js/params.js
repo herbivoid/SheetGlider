@@ -30,6 +30,10 @@ export const params = {
   tails: true,          // duration tails on long notes
   tailMin: 2,           // beats (quarter notes): half notes and longer get a tail
   tailOpacity: 0,       // the bar itself; 0 = only its light shows, once the character reaches it
+  // Reveal: the notation starts hidden and appears just ahead of the character
+  reveal: false,
+  revealAhead: 6,       // staff spaces ahead of the character where it starts to appear
+  revealFade: 5,        // staff spaces over which it fades in (fully shown this far behind that point)
   // Depth fog: things fade out with distance (multiples of the camera distance)
   fog: false,
   fogStart: 1.15,

@@ -25,6 +25,25 @@ export function setLightBlending(material, mode) {
 const QUAD = new THREE.PlaneGeometry(1, 1);
 const SLAB_DEPTH = 0.06;
 
+// Reveal: notation fades in as the character's "front" (a little ahead of him)
+// passes it. Lines and bands carry their distance along the staff per vertex
+// (aS), so they grow ahead of him; glyphs fade in whole.
+function revealFactor(s, front, fade) {
+  return 1 - THREE.MathUtils.smoothstep(s, front - fade, front);
+}
+
+// Adds the reveal to a material's shader: alpha × (1 at front - fade … 0 at front).
+// Declares aS / vS, which the tail materials use too.
+function patchReveal(shader, uniforms) {
+  Object.assign(shader.uniforms, uniforms);
+  shader.vertexShader = shader.vertexShader
+    .replace("#include <common>", "#include <common>\nattribute float aS;\nvarying float vS;")
+    .replace("#include <begin_vertex>", "#include <begin_vertex>\nvS = aS;");
+  shader.fragmentShader = shader.fragmentShader
+    .replace("#include <common>", "#include <common>\nvarying float vS;\nuniform float uFront;\nuniform float uFade;")
+    .replace("#include <alphamap_fragment>", "#include <alphamap_fragment>\ndiffuseColor.a *= 1.0 - smoothstep(uFront - uFade, uFront, vS);");
+}
+
 // Horizontal layout of the start of the staff (clef, key signature, time signature).
 export function headerLayout(score) {
   const clefX = 0.8;
@@ -51,9 +70,11 @@ export class StaffView {
     this.quads = [];             // { mesh, s, v, g, scale, tint }
     this.visuals = new Map();    // key -> { onset, color, glow, glowScale }
     this.tubeMaterials = new Map();
+    // Shared by every line and band material (see patchReveal). No reveal: front at infinity.
+    this.revealUniforms = { uFront: { value: 1e6 }, uFade: { value: 1 } };
     // Everything is "transparent" so depth fog can fade it out (see fog.js).
-    this.lineMaterial = new THREE.MeshBasicMaterial({ color: params.staffColor, transparent: true });
-    this.inkMaterial = new THREE.MeshBasicMaterial({ color: params.noteColor, side: THREE.DoubleSide, transparent: true });
+    this.lineMaterial = this.revealing(new THREE.MeshBasicMaterial({ color: params.staffColor, transparent: true }));
+    this.inkMaterial = this.revealing(new THREE.MeshBasicMaterial({ color: params.noteColor, side: THREE.DoubleSide, transparent: true }));
     this.header = headerLayout(score);
     this.sEnd = this.sOf(score.endBeat) + 3;
     this.frame = makeFrame();
@@ -62,6 +83,12 @@ export class StaffView {
 
   sOf(beat) { return this.header.width + this.spacing.x(beat); }
   staffCenter(staff) { return -staff * STAFF_GAP; }
+
+  revealing(material) {
+    material.customProgramCacheKey = () => "sheetglider-reveal";
+    material.onBeforeCompile = shader => patchReveal(shader, this.revealUniforms);
+    return material;
+  }
 
   build() {
     const { score, params, header } = this;
@@ -206,12 +233,10 @@ export class StaffView {
     const m = new THREE.MeshBasicMaterial({ color: P.noteColor, transparent: true, depthWrite: false, side: THREE.DoubleSide });
     m.customProgramCacheKey = () => `sheetglider-tail-${mode}`;
     m.onBeforeCompile = shader => {
+      patchReveal(shader, this.revealUniforms);
       Object.assign(shader.uniforms, this.tailUniforms);
-      shader.vertexShader = shader.vertexShader
-        .replace("#include <common>", "#include <common>\nattribute float aS;\nvarying float vS;")
-        .replace("#include <begin_vertex>", "#include <begin_vertex>\nvS = aS;");
       shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", "#include <common>\nvarying float vS;\nuniform float uNow;\nuniform vec3 uLit;\nuniform vec3 uPlayed;\nuniform float uAlpha;")
+        .replace("#include <common>", "#include <common>\nuniform float uNow;\nuniform vec3 uLit;\nuniform vec3 uPlayed;\nuniform float uAlpha;")
         .replace("vec4 diffuseColor = vec4( diffuse, opacity );", `float past = uNow - vS; // > 0: the character has passed here\n${look}`);
     };
     this.tailMats[mode] = m;
@@ -280,7 +305,7 @@ export class StaffView {
 
   tubeMaterial(tint) {
     if (!this.tubeMaterials.has(tint)) {
-      this.tubeMaterials.set(tint, new THREE.MeshBasicMaterial({ color: this.params.noteColor, transparent: true }));
+      this.tubeMaterials.set(tint, this.revealing(new THREE.MeshBasicMaterial({ color: this.params.noteColor, transparent: true })));
     }
     return this.tubeMaterials.get(tint);
   }
@@ -291,11 +316,17 @@ export class StaffView {
     const segments = Math.max(2, Math.ceil(len * 3));
     curve.arcLengthDivisions = segments * 2;
     const geo = new THREE.TubeGeometry(curve, segments, radius, 6, false);
+    // Distance along the staff per vertex, for the reveal. The tube's uv.x runs
+    // along its arc length; map that back to the curve parameter.
+    const uv = geo.attributes.uv;
+    const along = new Float32Array(uv.count);
+    for (let i = 0; i < uv.count; i++) along[i] = s0 + (s1 - s0) * curve.getUtoTmapping(uv.getX(i));
+    geo.setAttribute("aS", new THREE.BufferAttribute(along, 1));
     this.group.add(new THREE.Mesh(geo, material));
   }
 
   // A band between two edges (va, vb) along the staff, as a thin slab on the ribbon.
-  // Each vertex also carries its distance along the staff (aS), for the tail effect.
+  // Each vertex also carries its distance along the staff (aS), for the tail effect and the reveal.
   slab(points, material = this.inkMaterial) {
     // Resample so the slab bends with the ribbon.
     const pts = [];
@@ -377,14 +408,23 @@ export class StaffView {
     // the spark style: glow layer ("light"), or solid in the main picture ("paint").
     const tailLayer = params.sparkStyle === "paint" ? 0 : GLOW_LAYER;
     for (const mesh of this.litTails) mesh.layers.set(tailLayer);
+    const sNow = this.sOf(this.score.beatAt(t)); // where the character is along the staff
     if (this.tailUniforms) {
-      this.tailUniforms.uNow.value = this.sOf(this.score.beatAt(t));
+      this.tailUniforms.uNow.value = sNow;
       this.tailUniforms.uLit.value.set(params.glowColor);
       this.tailUniforms.uPlayed.value.set(params.playedColor);
       this.tailUniforms.uAlpha.value = params.tailOpacity;
     }
+    const front = params.reveal ? sNow + params.revealAhead : 1e6;
+    const fade = Math.max(0.05, params.revealFade);
+    this.revealUniforms.uFront.value = front;
+    this.revealUniforms.uFade.value = fade;
 
     for (const q of this.quads) {
+      const shown = revealFactor(q.s, front, fade);
+      q.mesh.visible = shown > 0;
+      if (!shown) continue;
+      q.mesh.material.opacity = shown;
       this.ribbon.frameAt(q.s, frame);
       at.copy(frame.P).addScaledVector(frame.U, q.v);
       quadAxes(camera, at, frame.T, frame.U, params.readability, params.flipSharpness, X, Y);

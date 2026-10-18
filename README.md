@@ -88,6 +88,14 @@ Use it to attach effects that follow the character. Your editor may need a scrip
 
 **Depth fog → fade with distance** makes far-away parts of the scene fade out, into transparency rather than into a color, so it still composites cleanly. It's good with shapes that travel into the distance, like approach, fly-in and fly-away. Fading starts and finishes at multiples of the camera distance, so it keeps working when you zoom.
 
+## Reveal
+
+**Reveal → appear as the character goes** starts with the sheet music hidden and makes it appear just ahead of the character as he moves along, so the staff seems to unroll in front of him:
+- *appears ahead by*: how far ahead of him (in staff spaces) things start to appear
+- *fade-in length*: how gradually they fade in. Staff lines and beams fade in point by point; notes, clefs and text fade in whole.
+
+When the video starts, the character is just coming in, so the very beginning of the staff may already be fading in. For an empty first frame, lengthen the lead-in (under Timing) or lower *appears ahead by*.
+
 ## Ribbon shapes
 
 Pick a **shape** preset: flat, arch, valley, waterslide, approach, fly-in, fly-away, swoop, slalom, twist, barrel-roll, corkscrew, rollercoaster, gentle-waves, coaster-flip, wild-coaster, carousel, loop, spiral.

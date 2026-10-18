@@ -73,6 +73,12 @@ export function buildGui(params, actions) {
   notation.add(params, "tailOpacity", 0, 1, 0.01).name("tail bar opacity");
   notation.close();
 
+  const reveal = gui.addFolder("Reveal");
+  reveal.add(params, "reveal").name("appear as the character goes");
+  reveal.add(params, "revealAhead", 0, 40, 0.5).name("appears ahead by (spaces)");
+  reveal.add(params, "revealFade", 0, 30, 0.5).name("fade-in length (spaces)");
+  reveal.close();
+
   const fog = gui.addFolder("Depth fog");
   fog.add(params, "fog").name("fade with distance").onChange(re);
   fog.add(params, "fogStart", 0.5, 5, 0.05).name("starts at (× camera dist.)").onFinishChange(re);
