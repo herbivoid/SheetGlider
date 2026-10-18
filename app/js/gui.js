@@ -66,7 +66,8 @@ export function buildGui(params, actions) {
 
   const notation = gui.addFolder("Notation");
   notation.add(params, "showDynamics").name("dynamics & hairpins").onChange(re);
-  notation.add(params, "showArticulations").name("articulations & fermatas").onChange(re);
+  notation.add(params, "showArticulations").name("articulations & ornaments").onChange(re);
+  notation.add(params, "showText").name("text & lines (let ring, tempo…)").onChange(re);
   notation.add(params, "showLyrics").name("lyrics").onChange(re);
   notation.add(params, "lyricsSize", 0.5, 2.5, 0.05).name("lyrics size").onFinishChange(re);
   notation.add(params, "tails").name("duration tails").onChange(re);

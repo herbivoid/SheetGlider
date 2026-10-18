@@ -69,7 +69,9 @@ export function measureExtras(score, params) {
   const left = (beat, w) => before.set(beatKey(beat), Math.max(before.get(beatKey(beat)) ?? 0, w));
   for (const e of score.elements) {
     const { count } = accidentalColumns(e.notes);
-    if (count) left(e.start, 0.25 + count * ACC_COL);
+    // Arpeggio lines and slides into the note (scoop, plop) sit left of it too.
+    const marks = (e.marks.includes("arpeggio") ? 0.9 : 0) + (e.marks.some(m => m === "scoop" || m === "plop") ? 1.4 : 0);
+    if (count || marks) left(e.start, (count ? 0.25 + count * ACC_COL : 0) + marks);
   }
   const graceGroups = new Map();
   for (const g of score.graces) graceGroups.set(`${g.staff}|${g.start}`, g);
@@ -200,7 +202,7 @@ export function engrave(score, { sOf, staffCenter, lineThickness, tabRhythm }) {
     for (const n of e.notes) {
       const x = xs.get(n.id);
       const v = c + n.pos / 2;
-      out.glyphs.push({ kind: `head:${head}`, s: x, v, scale: 1, tint: `n${n.id}` });
+      out.glyphs.push({ kind: `head:${head}${n.head ? `:${n.head}` : ""}`, s: x, v, scale: 1, tint: `n${n.id}` });
       out.visuals.push({ key: `n${n.id}`, note: n, s: x, v, beat: n.start, offset: 0, glow: !n.tieFromPrev, scale: 1 });
     }
     const minX = Math.min(...xs.values()) - headHalf;
@@ -340,7 +342,7 @@ function layoutGraces(out, score, { sOf, staffCenter, ledgerR }) {
     const s = edge - 0.3 - (g.groupSize - g.order - 0.5) * GRACE_STEP;
     const v = c + g.pos / 2;
     const key = `g${g.id}`;
-    out.glyphs.push({ kind: `head:${g.type === "half" ? "half" : "black"}`, s, v, scale: GRACE, tint: key });
+    out.glyphs.push({ kind: `head:${g.type === "half" ? "half" : "black"}${g.head ? `:${g.head}` : ""}`, s, v, scale: GRACE, tint: key });
     out.visuals.push({ key, note: g, s, v, beat: g.start, offset: -0.07 * (g.groupSize - g.order), glow: true, scale: GRACE });
     if (g.accidental !== null) {
       out.glyphs.push({ kind: `acc:${ACC_NAMES[g.accidental] ?? "natural"}`, s: s - HEAD_HALF * GRACE - 0.15, v, scale: GRACE, tint: key });

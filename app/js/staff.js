@@ -54,13 +54,23 @@ export function headerLayout(score) {
   return { clefX, keyX, timeX, width: timeX + METRICS.timeSig / 2 + 2.2 };
 }
 
+// A straight line in staff coordinates, mapped onto the ribbon. With `wave`
+// ({ amp, len }) it wiggles across its own direction (vibrato, trill, arpeggio lines).
 class StaffCurve extends THREE.Curve {
-  constructor(ribbon, s0, s1, v0, v1 = v0) {
+  constructor(ribbon, s0, s1, v0, v1 = v0, wave = null) {
     super();
-    Object.assign(this, { ribbon, s0, s1, v0, v1 });
+    Object.assign(this, { ribbon, s0, s1, v0, v1, wave });
+    this.length2d = Math.hypot(s1 - s0, v1 - v0) || 1;
   }
   getPoint(t, target = new THREE.Vector3()) {
-    return this.ribbon.pointAt(this.s0 + (this.s1 - this.s0) * t, this.v0 + (this.v1 - this.v0) * t, target);
+    let s = this.s0 + (this.s1 - this.s0) * t;
+    let v = this.v0 + (this.v1 - this.v0) * t;
+    if (this.wave) {
+      const w = this.wave.amp * Math.sin((2 * Math.PI * t * this.length2d) / this.wave.len);
+      s -= ((this.v1 - this.v0) / this.length2d) * w;
+      v += ((this.s1 - this.s0) / this.length2d) * w;
+    }
+    return this.ribbon.pointAt(s, v, target);
   }
 }
 
@@ -185,7 +195,7 @@ export class StaffView {
     for (const g of layout.glyphs) this.addGlyph(g.kind, g.s, g.v, g.scale, g.tint);
     for (const t of layout.tubes) {
       const material = t.tint ? this.tubeMaterial(t.tint) : t.ledger ? this.lineMaterial : this.inkMaterial;
-      this.tube(t.s0, t.s1, t.v0, t.v1, t.r, material);
+      this.tube(t.s0, t.s1, t.v0, t.v1, t.r, material, t.wave);
     }
     for (const b of layout.bands) this.slab(b);
     this.litTails = [];
@@ -342,7 +352,7 @@ export class StaffView {
     mesh.renderOrder = 1;
     this.group.add(mesh);
     // Numbers and words stay readable where the staff turns upside down (see facing.js).
-    const upright = /^(fret|text|dyn|tuplet):/.test(kind);
+    const upright = /^(fret|text|dyn|tuplet|tempo):/.test(kind);
     this.quads.push({ mesh, s, v, g, scale, tint, upright });
   }
 
@@ -353,10 +363,10 @@ export class StaffView {
     return this.tubeMaterials.get(tint);
   }
 
-  tube(s0, s1, v0, v1, radius, material) {
-    const curve = new StaffCurve(this.ribbon, s0, s1, v0, v1);
+  tube(s0, s1, v0, v1, radius, material, wave = null) {
+    const curve = new StaffCurve(this.ribbon, s0, s1, v0, v1, wave);
     const len = Math.abs(s1 - s0) + Math.abs(v1 - v0);
-    const segments = Math.max(2, Math.ceil(len * 3));
+    const segments = Math.max(2, Math.ceil(wave ? (curve.length2d / wave.len) * 10 : len * 3));
     curve.arcLengthDivisions = segments * 2;
     const geo = new THREE.TubeGeometry(curve, segments, radius, 6, false);
     // Distance along the staff per vertex, for the reveal. The tube's uv.x runs

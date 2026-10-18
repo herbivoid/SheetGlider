@@ -1,15 +1,18 @@
-import { METRICS, lyricWidth } from "./glyphs.js";
-import { staffHalf } from "./score.js";
+import { METRICS, lyricWidth, wordsWidth } from "./glyphs.js";
+import { WAVE, layoutMarks } from "./marks.js";
+import { isTab, staffHalf } from "./score.js";
 
-// Dynamics, hairpins, articulations, fermatas, lyrics and duration tails, laid
-// out in the same flat staff coordinates as engrave.js (s along the staff,
-// v up), using the notes and stems it already placed (out.info).
+// Everything around the notes, laid out in the same flat staff coordinates as
+// engrave.js (s along the staff, v up), using the notes and stems it already
+// placed (out.info): marks on notes (marks.js), dynamics and hairpins, lyrics,
+// duration tails, and the text and lines between notes (expression text,
+// "let ring" lines, tempo marks, pedal, vibrato…).
 
 export function layoutExpression(out, score, { sOf, staffCenter, params }) {
   // Vertical room around each staff: where its notes reach, and whether it has lyrics.
   const staves = score.staves.map((def, i) => {
     const c = staffCenter(i);
-    return { c, top: c + staffHalf(def), bottom: c - staffHalf(def), lo: Infinity, hi: -Infinity, lyrics: false };
+    return { c, top: c + staffHalf(def), bottom: c - staffHalf(def), tab: isTab(def), lo: Infinity, hi: -Infinity, lyrics: 0 };
   });
   for (const inf of out.info.values()) {
     const st = staves[inf.e.staff];
@@ -17,43 +20,133 @@ export function layoutExpression(out, score, { sOf, staffCenter, params }) {
       st.lo = Math.min(st.lo, inf.c + n.pos / 2);
       st.hi = Math.max(st.hi, inf.c + n.pos / 2);
     }
+    if (!inf.whole && inf.dir > 0) st.stemHi = Math.max(st.stemHi ?? -Infinity, inf.tip);
     if (inf.tab && !inf.whole) st.lo = Math.min(st.lo, inf.tip); // tab rhythm hangs below the staff
-    if (inf.e.lyrics?.length) st.lyrics = true;
+    for (const ly of inf.e.lyrics ?? []) st.lyrics = Math.max(st.lyrics, ly.verse);
   }
+  const shown = params.showLyrics;
   staves.forEach((st, i) => {
     st.lyricV = Math.min(st.bottom - 3.5, st.lo - 2.6);
     // Dynamics go under the staff (between the staves on piano), or above it when lyrics are under it.
+    const lyricsBelow = st.lyrics && shown;
     st.dynV = st.lyrics ? Math.max(st.top + 2.5, st.hi + 2.2) : Math.min(st.bottom - 2.5, st.lo - 2.0);
     if (staves.length > 1 && i === 0 && !st.lyrics) st.dynV = Math.max(st.dynV, st.c - 6);
+    // Rows for text and lines (their middle height): above clears the notes (and
+    // tab bend arrows); below clears the notes, dynamics and lyrics.
+    const dynamicsBelow = params.showDynamics && !st.lyrics
+      && (score.dynamics.some(d => d.staff === i) || score.wedges.some(w => w.staff === i));
+    const dynamicsAbove = params.showDynamics && st.lyrics && score.dynamics.some(d => d.staff === i);
+    st.aboveV = Math.max(st.top + (st.tab ? 3.4 : 2.4), st.hi + 2.0, (st.stemHi ?? -Infinity) + 1.2,
+      dynamicsAbove ? st.dynV + 2.2 : -Infinity);
+    st.belowV = Math.min(st.bottom - 3.0, st.lo - 2.2, dynamicsBelow ? st.dynV - 2.2 : Infinity,
+      lyricsBelow ? st.lyricV - (st.lyrics - 1) * 2.0 - 1.6 : Infinity);
+    st.rows = { above: [], below: [] };
   });
   out.tails = [];
 
-  if (params.showArticulations) articulations(out);
+  layoutMarks(out, staves, params);
   if (params.showDynamics) dynamics(out, score, staves, sOf);
   if (params.showLyrics) lyrics(out, staves, params.lyricsSize);
   if (params.tails) tails(out, score, sOf, params.tailMin);
+  if (params.showText) {
+    texts(out, score, staves, sOf);
+    lines(out, score, staves, sOf);
+  }
 }
 
-function articulations(out) {
-  for (const inf of out.info.values()) {
-    const e = inf.e;
-    if (!e.artic?.length && !e.fermata) continue;
-    const vs = e.notes.map(n => inf.c + n.pos / 2);
-    // On the notehead side, away from the stem; inside the staff they sit in a space, not on a line.
-    const side = inf.whole ? 1 : -inf.dir;
-    let v = side > 0 ? Math.max(...vs) + 1.0 : Math.min(...vs) - 1.0;
-    if (inf.tab) v += side * 0.3; // clear of the fret number
-    for (const a of e.artic) {
-      if (!inf.tab && Math.abs(v - inf.c) < 2.4) v = inf.c + Math.round(v - inf.c - 0.5) + 0.5;
-      out.glyphs.push({ kind: `artic:${a}:${side > 0 ? "above" : "below"}`, s: inf.s, v, scale: 1, tint: inf.tint });
-      v += side * 0.9;
-    }
-    if (e.fermata) {
-      const stemUp = !inf.whole && inf.dir > 0 ? inf.tip : -Infinity;
-      const v = Math.max(...vs, stemUp, inf.c + (inf.half ?? 2)) + 1.3;
-      out.glyphs.push({ kind: "artic:fermata:above", s: inf.s, v, scale: 1, tint: inf.tint });
+// The height of the first row (above or below the staff) with room for something from s0 to s1.
+function rowFor(st, placement, s0, s1) {
+  const below = placement === "below";
+  const rows = st.rows[below ? "below" : "above"];
+  for (let k = 0; ; k++) {
+    rows[k] ??= [];
+    if (rows[k].every(([a, b]) => s1 < a - 0.4 || s0 > b + 0.4)) {
+      rows[k].push([s0, s1]);
+      return below ? st.belowV - k * 2.1 : st.aboveV + k * 2.1;
     }
   }
+}
+
+// Text that belongs to a moment: words ("let ring", "dolce"…), rehearsal marks,
+// segno / coda, tempo marks. Left-aligned at their beat, like in the score.
+function texts(out, score, staves, sOf) {
+  for (const t of [...score.texts].sort((a, b) => a.beat - b.beat)) {
+    const st = staves[t.staff] ?? staves[0];
+    const s = sOf(t.beat) - 0.6;
+    const place = (w, placement = t.placement) => rowFor(st, placement, s, s + w);
+    if (t.kind === "words") {
+      const w = wordsWidth(t.style, t.text);
+      const v = place(w);
+      out.glyphs.push({ kind: `text:${t.style}:${t.text}`, s: s + w / 2, v: v - 0.45, scale: 1, tint: null });
+    } else if (t.kind === "rehearsal") {
+      // Bold, in a box.
+      const w = wordsWidth("rehearsal", t.text) + 0.7;
+      const v = place(w, "above") + 0.4;
+      out.glyphs.push({ kind: `text:rehearsal:${t.text}`, s: s + w / 2, v: v - 0.6, scale: 1, tint: null });
+      const [x0, x1, y0, y1] = [s, s + w, v - 1.05, v + 0.95];
+      for (const [a, b, c, d] of [[x0, y0, x1, y0], [x1, y0, x1, y1], [x1, y1, x0, y1], [x0, y1, x0, y0]]) {
+        out.tubes.push({ s0: a, v0: b, s1: c, v1: d, r: 0.05 });
+      }
+    } else if (t.kind === "segno" || t.kind === "coda") {
+      const v = place(1.6, "above");
+      out.glyphs.push({ kind: `artic:${t.kind}:above`, s: s + 0.8, v: v + 0.3, scale: 1, tint: null });
+    } else if (t.kind === "tempo") {
+      const label = t.label ? `${t.label}|` : "";
+      const w = (t.label ? wordsWidth("bold", `${t.label} `) : 0) + 1.2 + wordsWidth("plain", ` = ${t.bpm}`);
+      const v = place(w, "above");
+      out.glyphs.push({ kind: `tempo:${t.unit}:${t.dots}:${label}${t.bpm}`, s, v: v - 0.45, scale: 1, tint: null });
+    }
+  }
+}
+
+// Lines over a stretch of music: dashed or solid lines with a label ("let ring",
+// "P.M.", "cresc.") and end hooks, pedal marks, and wavy vibrato / trill lines.
+function lines(out, score, staves, sOf) {
+  const r = 0.045;
+  for (const l of [...score.lines].sort((a, b) => a.start - b.start)) {
+    const st = staves[l.staff] ?? staves[0];
+    if (l.kind === "wavy") {
+      // On top of the note's marks, continuing a trill sign if there is one.
+      const inf = [...out.info.values()].find(i => i.e.staff === l.staff && Math.abs(i.e.start - l.start) < 1e-6);
+      const v = inf?.trillV ?? (inf ? inf.above + 0.3 : st.aboveV);
+      const s0 = (inf?.s ?? sOf(l.start)) + (inf?.trillV !== undefined ? 1.0 : -0.3);
+      const s1 = Math.max(s0 + 0.8, sOf(l.end) - 0.8);
+      out.tubes.push({ s0, v0: v, s1, v1: v, r: 0.05, wave: WAVE });
+      continue;
+    }
+    const pedal = l.kind === "pedal";
+    const placement = l.placement ?? (pedal ? "below" : "above");
+    const s0 = sOf(l.start) - 0.6;
+    const s1 = Math.max(s0 + 1, sOf(l.end) - 0.3);
+    const v = rowFor(st, placement, s0, s1);
+    // The label ("let ring", or Ped.), then the line.
+    let from = s0;
+    if (l.label) {
+      const w = wordsWidth(l.style ?? "plain", l.label);
+      out.glyphs.push({ kind: `text:${l.style ?? "plain"}:${l.label}`, s: s0 + w / 2, v: v - 0.45, scale: 1, tint: null });
+      from = s0 + w + 0.4;
+    } else if (pedal && l.sign) {
+      out.glyphs.push({ kind: "artic:ped:above", s: s0 + 1.1, v, scale: 1, tint: null });
+      from = s0 + 2.4;
+    }
+    if (pedal && !l.line) {
+      out.glyphs.push({ kind: "artic:pedUp:above", s: s1, v, scale: 1, tint: null });
+      continue;
+    }
+    if (l.dashed) {
+      for (let x = from; x < s1; x += 0.9) out.tubes.push({ s0: x, v0: v, s1: Math.min(s1, x + 0.5), v1: v, r });
+    } else if (s1 > from) {
+      out.tubes.push({ s0: from, v0: v, s1, v1: v, r });
+    }
+    hook(out, l.label || (pedal && l.sign) ? "none" : l.startHook, s0, v, r);
+    hook(out, l.endHook, s1, v, r);
+  }
+}
+
+function hook(out, kind, s, v, r) {
+  const up = kind === "up" || kind === "both";
+  const down = kind === "down" || kind === "both";
+  if (up || down) out.tubes.push({ s0: s, v0: down ? v - 0.8 : v, s1: s, v1: up ? v + 0.8 : v, r });
 }
 
 function dynamics(out, score, staves, sOf) {

@@ -7,15 +7,13 @@ The score is read measure by measure, then the measures are written out in
 playing order (repeats expanded, if asked), each pass with fresh element ids,
 so ties, slurs, beams and tuplets all repeat along with their notes.
 """
-import zipfile
-import xml.etree.ElementTree as ET
 from itertools import count
 from pathlib import Path
 
+from .details import credit_title, emit_directions, load_xml, read_details
+
 CLEFS = {("G", 2): "treble", ("F", 4): "bass", ("C", 3): "alto", ("C", 4): "tenor"}
 STANDARD_TUNING = [40, 45, 50, 55, 59, 64]  # guitar, lowest string first (MIDI)
-STEP_SEMITONES = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-TECHNIQUES = {"hammer-on": "H", "pull-off": "P", "slide": "slide", "glissando": "slide"}
 TYPES = {"breve": "whole", "whole": "whole", "half": "half", "quarter": "quarter",
          "eighth": "eighth", "16th": "16th", "32nd": "32nd", "64th": "32nd"}
 ARTICULATIONS = {"Staccato": "staccato", "Staccatissimo": "staccatissimo", "Accent": "accent",
@@ -49,17 +47,15 @@ def parse_file(path, expand_repeats=True):
 
     # Repeat signs and 1st/2nd endings only mean something when playing as written.
     written = order == list(range(len(staff_measures[0])))
-    try:
-        root = load_xml(path)
-    except (OSError, ET.ParseError, KeyError, StopIteration, zipfile.BadZipFile):
-        root = None
-    tab = read_tab(root, len(chosen))
+    root = load_xml(path)
+    details = read_details(root, len(chosen))
     slurs = [(sl.getFirst(), sl.getLast()) for sl in score.spannerBundle.getByClass("Slur")]
     wedges = [("crescendo" if type(w).__name__ == "Crescendo" else "diminuendo", w.getFirst(), w.getLast())
               for w in score.spannerBundle.getByClass("DynamicWedge")]
     out = {"notes": [], "rests": [], "graces": [], "slurs": [], "tuplets": [], "bars": [],
            "keyChanges": [], "timeChanges": [], "clefChanges": [], "tempo": [],
-           "dynamics": [], "wedges": [], "repeats": [], "voltas": [], "techniques": []}
+           "dynamics": [], "wedges": [], "repeats": [], "voltas": [], "techniques": [],
+           "texts": [], "lines": []}
     ids = count()
     latest = {}  # id(music21 element) -> element id of its most recent copy (+ its timing)
     measure_start = {}
@@ -68,7 +64,8 @@ def parse_file(path, expand_repeats=True):
         measure_start[mi] = offset
         for staff, measures in enumerate(staff_measures):
             if mi < len(measures):
-                read_measure(measures[mi], staff, offset, out, ids, latest, staff == 0, written, (tab, mi))
+                read_measure(measures[mi], staff, offset, out, ids, latest, staff == 0, written, (details, mi))
+        emit_directions(details, mi, offset, out, len(chosen))
         # Slurs and hairpins whose last note was just written, and whose first note has been.
         just_written = lambda el: latest.get(("pass", id(el))) == offset
         for first, last in slurs:
@@ -106,7 +103,7 @@ def parse_file(path, expand_repeats=True):
         c = first_clefs.get(staff)
         staves.append({"clef": c["clef"] if c and c["beat"] == 0 else "treble"})
         if staves[-1]["clef"] == "tab":
-            staves[-1].update(tab["staves"].get(staff, {"lines": 6, "tuning": STANDARD_TUNING}))
+            staves[-1].update(details["staves"].get(staff, {"lines": 6, "tuning": STANDARD_TUNING}))
     out["clefChanges"] = [c for c in out["clefChanges"] if c["beat"] > 0]
     key0 = next((k for k in out["keyChanges"] if k["beat"] == 0), None)
     time0 = next((t for t in out["timeChanges"] if t["beat"] == 0), None)
@@ -138,29 +135,50 @@ def play_order(part, measures):
     return [index_by_number[m.number] for m in expanded.getElementsByClass("Measure")]
 
 
-def read_measure(m, staff, offset, out, ids, latest, is_first_staff, written, tabctx):
+def read_measure(m, staff, offset, out, ids, latest, is_first_staff, written, detailctx):
     from music21 import bar
 
     rel = lambda el: round(offset + float(el.getOffsetInHierarchy(m)), 6)
     measure_len = float(m.duration.quarterLength)
-    tab, mi = tabctx
+    details, mi = detailctx
 
-    def tab_of(el, member, grace=False):
-        """This note's tab details (string, fret, ...), connecting any hammer-on/pull-off/slide."""
+    def details_of(el, member, grace=False):
+        """This note's details from the XML (see details.py), connecting any
+        hammer-on / pull-off / slide / vibrato line it starts or ends."""
         key = (staff, mi, round(float(el.getOffsetInHierarchy(m)), 4), member.pitch.midi, grace)
-        info = tab["notes"].get(key)
+        info = details["notes"].get(key)
         if not info:
-            return None
-        here = (latest[id(el)], info.get("string"))
+            return {}
+        here = {"el": latest[id(el)], "string": info.get("string"), "beat": rel(el)}
+        end = rel(el) + float(el.quarterLength)
+        opened = details["open"]
+
+        def close(kind, k):
+            src, label = opened.pop(k)
+            if kind == "wavy":
+                out["lines"].append({"kind": "wavy", "staff": staff, "start": src["beat"], "end": end})
+            else:
+                out["techniques"].append({"kind": kind, "staff": staff, "from": src["el"], "fromString": src["string"],
+                                          "to": here["el"], "toString": here["string"], "label": label})
+        # Stops first (a note can end one hammer-on and start the next); a line
+        # that starts and stops on this same note closes after it opens.
+        pending = []
         for kind, kind_type, number, label in sorted(info["events"], key=lambda ev: ev[1] != "stop"):
             k = (staff, kind, number)
-            if kind_type == "stop" and k in tab["open"]:
-                (src, src_string), src_label = tab["open"].pop(k)
-                out["techniques"].append({"kind": kind, "staff": staff, "from": src, "fromString": src_string,
-                                          "to": here[0], "toString": here[1], "label": src_label})
-            elif kind_type == "start":
-                tab["open"][k] = (here, label)
-        return {k: v for k, v in info.items() if k != "events"}
+            if kind_type == "start":
+                opened[k] = (here, label)
+            elif k in opened:
+                close(kind, k)
+            else:
+                pending.append((kind, k))
+        for kind, k in pending:
+            if k in opened:
+                close(kind, k)
+        return info
+
+    def tab_of(info):
+        keys = ("string", "fret", "hidden", "paren", "bend")
+        return {k: info[k] for k in keys if k in info} if "string" in info else None
 
     if written and is_first_staff:
         if isinstance(m.leftBarline, bar.Repeat) and m.leftBarline.direction == "start":
@@ -197,11 +215,12 @@ def read_measure(m, staff, offset, out, ids, latest, is_first_staff, written, ta
         members = el.notes if el.isChord else [el]
         if el.duration.isGrace:
             for member in members:
+                info = details_of(el, member, grace=True)
                 out["graces"].append({
                     "el": eid, "staff": staff, "start": start, **pitch_of(member),
                     "type": TYPES.get(el.duration.type, "eighth"),
                     "slash": bool(getattr(el.duration, "slash", False)),
-                    "tab": tab_of(el, member, grace=True),
+                    "tab": tab_of(info), "head": info.get("head"),
                 })
             continue
         group = tuplet_group(el, voice, tuplet, out, staff, ids)
@@ -213,6 +232,7 @@ def read_measure(m, staff, offset, out, ids, latest, is_first_staff, written, ta
         lyrics = [{"text": ly.text, "syllabic": ly.syllabic or "single", "verse": int(ly.number or 1)}
                   for ly in el.lyrics if ly.text]
         for i, member in enumerate(members):
+            info = details_of(el, member)
             tie = member.tie or (el.tie if el.isChord else None)
             tie_type = tie.type if tie else None
             out["notes"].append({
@@ -224,9 +244,10 @@ def read_measure(m, staff, offset, out, ids, latest, is_first_staff, written, ta
                 "tieStart": tie_type in ("start", "continue"),
                 "tieStop": tie_type in ("stop", "continue"),
                 "stem": stem, "beams": beams, "tuplet": group,
-                "artic": artic, "fermata": fermata,
+                "artic": artic + [a for a in info.get("artic", []) if a not in artic], "fermata": fermata,
+                "marks": info.get("marks", []), "head": info.get("head"),
                 "lyrics": lyrics if i == 0 else [],  # one set per chord
-                "tab": tab_of(el, member),
+                "tab": tab_of(info),
             })
 
     for r in m.recurse().getElementsByClass("Rest"):
@@ -273,114 +294,6 @@ def only_changes(items, group_of, value_of):
             kept.append(item)
             current[g] = value_of(item)
     return kept
-
-
-def credit_title(root):
-    if root is None:
-        return None
-    for credit in root.findall("credit"):
-        if credit.findtext("credit-type") == "title":
-            words = " ".join((w.text or "").strip() for w in credit.findall("credit-words")).strip()
-            if words:
-                return words
-    return None
-
-
-def read_tab(root, n_staves):
-    """Guitar tab details, read straight from the XML (music21 skips some of them).
-
-    Returns {"staves": {staff: {lines, tuning}}, "notes": {key: info}, "open": {}} for the
-    first part. A note's key is (staff, measure index, offset in quarters, MIDI pitch,
-    is grace); its info has string, fret, hidden (fret not printed), paren, bend (in
-    semitones, negative = release), and events [(kind, start|stop, number, label)] for
-    hammer-ons ("H"), pull-offs ("P") and slides.
-    """
-    tab = {"staves": {}, "notes": {}, "open": {}}
-    part = root.find("part") if root is not None else None
-    if part is None:
-        return tab
-    divisions = 1.0
-    for mi, measure in enumerate(part.findall("measure")):
-        pos = last = 0.0
-        for el in measure:
-            if el.tag == "attributes":
-                divisions = float(el.findtext("divisions") or divisions)
-                for sd in el.findall("staff-details"):
-                    staff = int(sd.get("number", "1")) - 1
-                    tuning = {}
-                    for t in sd.findall("staff-tuning"):
-                        tuning[int(t.get("line"))] = midi_of(
-                            t.findtext("tuning-step"), t.findtext("tuning-alter"), t.findtext("tuning-octave"))
-                    lines = int(sd.findtext("staff-lines") or len(tuning) or 6)
-                    if staff < n_staves and tuning:
-                        tab["staves"][staff] = {"lines": lines, "tuning": [tuning[k] for k in sorted(tuning)]}
-            elif el.tag == "backup":
-                pos -= float(el.findtext("duration") or 0)
-            elif el.tag == "forward":
-                pos += float(el.findtext("duration") or 0)
-            elif el.tag == "note":
-                chord = el.find("chord") is not None
-                start = last if chord else pos
-                if not chord:
-                    last = pos
-                    pos += float(el.findtext("duration") or 0)
-                pitch = el.find("pitch")
-                if pitch is None:
-                    continue
-                staff = int(el.findtext("staff") or 1) - 1
-                midi = midi_of(pitch.findtext("step"), pitch.findtext("alter"), pitch.findtext("octave"))
-                key = (staff, mi, round(start / divisions, 4), midi, el.find("grace") is not None)
-                info = note_tab(el)
-                if info:
-                    tab["notes"][key] = info
-    return tab
-
-
-def note_tab(note):
-    info = {"events": []}
-    head = note.find("notehead")
-    if head is not None and head.get("parentheses") == "yes":
-        info["paren"] = True
-    for notations in note.findall("notations"):
-        tech = notations.find("technical")
-        if tech is not None and tech.findtext("string") and tech.findtext("fret"):
-            info["string"] = int(tech.findtext("string"))
-            info["fret"] = int(tech.findtext("fret"))
-            if notations.get("print-object") == "no":
-                info["hidden"] = True
-        bend = tech.find("bend") if tech is not None else None
-        if bend is not None and bend.findtext("bend-alter"):
-            alter = float(bend.findtext("bend-alter"))
-            info["bend"] = -abs(alter) if bend.find("release") is not None else alter
-        # MuseScore writes hammer-ons/pull-offs directly under <notations>; the standard puts them in <technical>.
-        for tag, kind in TECHNIQUES.items():
-            for t in notations.iter(tag):
-                if t.get("type") in ("start", "stop"):
-                    label = (t.text or "").strip() if kind != "slide" else ""
-                    info["events"].append((kind, t.get("type"), t.get("number", "1"), label or kind))
-    return info if "string" in info or info["events"] else None
-
-
-def load_xml(path):
-    """The score's XML root, also from a compressed .mxl."""
-    path = Path(path)
-    if path.suffix.lower() != ".mxl":
-        return strip_namespaces(ET.parse(path).getroot())
-    with zipfile.ZipFile(path) as z:
-        container = ET.fromstring(z.read("META-INF/container.xml"))
-        rootfile = next(e for e in container.iter() if e.tag.endswith("rootfile"))
-        return strip_namespaces(ET.fromstring(z.read(rootfile.get("full-path"))))
-
-
-def strip_namespaces(root):
-    for e in root.iter():
-        if isinstance(e.tag, str) and "}" in e.tag:
-            e.tag = e.tag.split("}", 1)[1]
-    return root
-
-
-def midi_of(step, alter, octave):
-    return 12 * (int(octave) + 1) + STEP_SEMITONES[step] + round(float(alter or 0))
 
 
 def pitch_of(n):

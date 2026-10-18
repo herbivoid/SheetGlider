@@ -55,13 +55,34 @@ const G = {
   restWhole: "", restHalf: "", restQuarter: "", rest8th: "",
   rest16th: "", rest32nd: "",
   dot: "", brace: "",
-  // Articulations: [above, below]
+  // Other notehead shapes: [whole, half, black]
+  noteheadX: ["", "", ""], noteheadDiamond: ["", "", ""],
+  // Metronome marks
+  metNote: { whole: "", half: "", quarter: "", eighth: "", "16th": "" },
+  metDot: "",
+  // Articulations and other marks (ornaments, bowings, signs…): [above, below]
+  portato: ["", ""], stress: ["", ""], unstress: ["", ""],
+  harmonic: ["", ""], open: ["", ""], stopped: ["", ""],
+  upBow: ["", ""], downBow: ["", ""], snapPizz: ["", ""],
+  thumb: ["", ""],
+  trill: ["", ""], mordent: ["", ""], invertedMordent: ["", ""],
+  turn: ["", ""], invertedTurn: ["", ""],
+  breath: ["", ""], caesura: ["", ""],
+  segno: ["", ""], coda: ["", ""], ped: ["", ""], pedUp: ["", ""],
   accent: ["", ""], staccato: ["", ""], tenuto: ["", ""],
   staccatissimo: ["", ""], marcato: ["", ""], fermata: ["", ""],
 };
 // Dynamics are spelled from these letters (mf = m + f).
 const DYNAMIC_LETTERS = { p: "", m: "", f: "", r: "", s: "", z: "", n: "" };
 const TEXT_FONT = 'Georgia, "Times New Roman", serif';
+// Text styles ("text:<style>:<words>"): [italic / bold, size in staff spaces]
+const TEXT_STYLES = {
+  lyric: ["", 1.6], label: ["bold", 1.3],
+  plain: ["", 1.45], italic: ["italic", 1.45], bold: ["bold", 1.45],
+  rehearsal: ["bold", 1.7], finger: ["", 1.1], pluck: ["italic", 1.25],
+};
+// A canvas font: the italic / bold part has to come before the size.
+const textFont = (look, size) => `${look} ${size * PX}px ${TEXT_FONT}`.trim();
 const FRET_FONT = '600 1px Arial, "Helvetica Neue", Helvetica, sans-serif'; // size set where used
 const FRET_SIZE = 1.45; // font size in staff spaces: digits about one space tall
 const timeSigDigit = d => String.fromCharCode(0xE080 + d);
@@ -107,8 +128,11 @@ function build(kind) {
   const [group, a, b] = kind.split(":");
   switch (group) {
     // Noteheads, anchored at their center.
+    // ("head:half", or with a shape: "head:black:x", "head:half:diamond")
     case "head": return canvasGlyph(1.3, 1.3, 0.85, 0.85, ctx => {
-      const ch = { whole: G.noteheadWhole, half: G.noteheadHalf }[a] ?? G.noteheadBlack;
+      const shaped = { x: G.noteheadX, diamond: G.noteheadDiamond }[b];
+      const ch = shaped ? shaped[{ whole: 0, half: 1 }[a] ?? 2]
+        : { whole: G.noteheadWhole, half: G.noteheadHalf }[a] ?? G.noteheadBlack;
       music(ctx, ch, -textWidth(ctx, ch) / 2, 0);
     });
     // Flags, anchored where they join the stem: its left edge, at the stem's end.
@@ -165,7 +189,7 @@ function build(kind) {
     }
     // Articulation or fermata ("artic:staccato:above"), centered.
     case "artic": {
-      const ch = G[a]?.[b === "below" ? 1 : 0] ?? G.staccato[0];
+      const ch = G[a]?.[b === "below" ? 1 : 0] ?? G.staccato[0]; // (also ornaments, bowings, segno, Ped. …)
       return canvasGlyph(1.5, 1.5, 1.5, 1.5, ctx => centered(ctx, ch));
     }
     // A dynamic ("dyn:mf"): music-font letters if it's spelled with them, else italic text.
@@ -175,14 +199,17 @@ function build(kind) {
         const text = [...word].map(c => DYNAMIC_LETTERS[c]).join("");
         return canvasGlyph(3.5, 3.5, 1.5, 1.5, ctx => centered(ctx, text));
       }
-      return textGlyph(word, `italic ${TEXT_FONT}`, 1.5);
+      return textGlyph(word, "italic", 1.5);
     }
-    // Plain text ("text:lyric:twin"): lyrics, labels.
+    // Plain text ("text:lyric:twin"): lyrics, labels, expression text, fingering…
     case "text": {
       const style = a;
       const words = kind.slice(6 + style.length);
-      return style === "label" ? textGlyph(words, `bold ${TEXT_FONT}`, 1.3) : textGlyph(words, TEXT_FONT, 1.6);
+      const [look, size] = TEXT_STYLES[style] ?? TEXT_STYLES.lyric;
+      return textGlyph(words, look, size);
     }
+    // A tempo mark ("tempo:quarter:1:Allegro|120"): optional words, then ♩. = 120. Anchored at its left end.
+    case "tempo": return tempoGlyph(a, Number(b) || 0, kind.split(":").slice(3).join(":"));
     case "glow": return glowGlyph();
     default: throw new Error(`unknown glyph ${kind}`);
   }
@@ -216,25 +243,62 @@ function centeredText(ctx, text, font, x = 0, y = 0) {
   ctx.restore();
 }
 
-// Width in staff spaces of a lyric syllable (for spacing notes so lyrics don't collide).
-let lyricProbe = null;
-export function lyricWidth(text) {
-  lyricProbe ??= document.createElement("canvas").getContext("2d");
-  lyricProbe.font = `${1.6 * PX}px ${TEXT_FONT}`;
-  return lyricProbe.measureText(text).width / PX;
+// Width in staff spaces of some text in one of the TEXT_STYLES.
+let textProbe = null;
+export function wordsWidth(style, text) {
+  const [look, size] = TEXT_STYLES[style] ?? TEXT_STYLES.lyric;
+  textProbe ??= document.createElement("canvas").getContext("2d");
+  textProbe.font = textFont(look, size);
+  return textProbe.measureText(text).width / PX;
+}
+// Width of a lyric syllable (for spacing notes so lyrics don't collide).
+export const lyricWidth = text => wordsWidth("lyric", text);
+
+function tempoGlyph(unit, dots, spec) {
+  const [label, bpm] = spec.includes("|") ? spec.split("|") : ["", spec];
+  const size = TEXT_STYLES.plain[1];
+  const boldFont = textFont("bold", size);
+  const plainFont = textFont("", size);
+  const probe = document.createElement("canvas").getContext("2d");
+  const measure = (f, t) => { probe.font = f; return probe.measureText(t).width / PX; };
+  const note = G.metNote[unit] ?? G.metNote.quarter;
+  const NOTE = 0.62; // metronome note size, relative to the music font
+  probe.font = `${4 * PX}px ${FONT}`;
+  const noteW = (probe.measureText(note).width / PX) * NOTE;
+  const lead = label ? measure(boldFont, `${label} `) : 0;
+  const tail = measure(plainFont, ` = ${bpm}`);
+  const w = lead + noteW + dots * 0.45 + tail + 0.3;
+  const g = canvasGlyph(0, w, 0.5, 2.3, ctx => {
+    ctx.save();
+    const m = ctx.getTransform();
+    ctx.setTransform(1, 0, 0, 1, m.e, m.f);
+    ctx.textBaseline = "alphabetic";
+    if (label) { ctx.font = boldFont; ctx.fillText(`${label} `, 0, 0); }
+    ctx.restore();
+    music(ctx, note, lead, 0, NOTE, NOTE);
+    for (let d = 0; d < dots; d++) music(ctx, G.metDot, lead + noteW + 0.12 + d * 0.4, 0, NOTE, NOTE);
+    ctx.save();
+    const m2 = ctx.getTransform();
+    ctx.setTransform(1, 0, 0, 1, m2.e + (lead + noteW + dots * 0.45) * PX, m2.f);
+    ctx.font = plainFont;
+    ctx.fillText(` = ${bpm}`, 0, 0);
+    ctx.restore();
+  });
+  return g;
 }
 
 // Ordinary text (not the music font), `size` staff spaces tall, sitting on its
 // baseline: anchored horizontally centered, at the baseline.
-function textGlyph(text, font, size) {
+function textGlyph(text, look, size) {
+  const font = textFont(look, size);
   const probe = document.createElement("canvas").getContext("2d");
-  probe.font = `${size * PX}px ${font}`;
+  probe.font = font;
   const w = probe.measureText(text).width / PX + 0.4;
   return canvasGlyph(w / 2, w / 2, size * 0.35, size * 1.05, ctx => {
     ctx.save();
     const m = ctx.getTransform();
     ctx.setTransform(1, 0, 0, 1, m.e, m.f);
-    ctx.font = `${size * PX}px ${font}`;
+    ctx.font = font;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     ctx.fillText(text, 0, 0);

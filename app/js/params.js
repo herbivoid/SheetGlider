@@ -26,6 +26,7 @@ export const params = {
   showDynamics: true,
   showArticulations: true,
   showLyrics: true,
+  showText: true,       // text & lines: expression text, "let ring", tempo marks, pedal, vibrato…
   lyricsSize: 1,
   tails: true,          // duration tails on long notes
   tailMin: 2,           // beats (quarter notes): half notes and longer get a tail

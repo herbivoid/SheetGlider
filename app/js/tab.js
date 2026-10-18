@@ -9,8 +9,11 @@ import { arc } from "./spanners.js";
 const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 const STEM_ATTACH = 0.168;
 
-// The fret number as shown: in parentheses when tied over (or marked so in the file).
-export const fretText = n => (n.tab.paren || n.tieFromPrev ? `(${n.tab.fret})` : `${n.tab.fret}`);
+// The fret number as shown: × for a dead note, in parentheses when tied over (or marked so in the file).
+export function fretText(n) {
+  const fret = n.head === "x" ? "×" : `${n.tab.fret}`;
+  return n.tab.paren || n.tieFromPrev ? `(${fret})` : fret;
+}
 const halfWidth = n => (n.tab.hidden ? 0.1 : fretWidth(fretText(n)) / 2);
 
 // One chord (or single note) on a tab staff. Returns the same info as a
@@ -125,7 +128,7 @@ export function layoutTab(out, score, { sOf, staffCenter }) {
 const bendLabel = semitones => ({ 0.5: "¼", 1: "½", 2: "full", 3: "1½", 4: "2" }[Math.abs(semitones)] ?? `${Math.abs(semitones) / 2}`);
 
 // A quarter-ellipse polyline from (x0, y0), leaving level, to (x1, y1), arriving vertical.
-function curve(out, x0, y0, x1, y1, tint) {
+export function curve(out, x0, y0, x1, y1, tint) {
   const n = 8;
   let px = x0;
   let py = y0;

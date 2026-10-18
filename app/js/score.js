@@ -7,6 +7,8 @@
 //   tempo: [{ beat, bpm }], bars: [beat of each barline], endBeat,
 //   notes: [{ staff, start, dur, type, dots, step, alter, octave, tieStart, tieStop }],
 //   rests: [{ staff, start, dur, type, dots, measureRest }],
+//   (optional, from MusicXML) slurs, tuplets, dynamics, wedges, repeats, voltas,
+//   techniques, texts, lines; and per note artic, marks, head, lyrics, tab
 // }
 // A guitar tab staff has clef "tab", its number of lines and its tuning (MIDI,
 // lowest string first); its notes carry tab: { string, fret, hidden, paren, bend }.
@@ -148,6 +150,7 @@ export function finalizeScore(raw, tempoScale = 1) {
       tieFromPrev: !!n.tieStop, tieToNext: !!n.tieStart,
       stem: n.stem ?? null, beams: n.beams ?? null, tuplet: n.tuplet ?? null,
       artic: n.artic ?? [], fermata: !!n.fermata, lyrics: n.lyrics ?? [],
+      marks: n.marks ?? [], head: n.head ?? null, // other marks (ornaments, bowing, harmonic…); x / diamond heads
     };
   };
   const notes = raw.notes.filter(n => n.dur > 0).map(makeNote)
@@ -188,10 +191,14 @@ export function finalizeScore(raw, tempoScale = 1) {
       elements.set(n.el, {
         id: n.el, staff: n.staff, voice: n.voice, start: n.start, dur: n.dur, type: n.type,
         dots: n.dots, stem: n.stem, beams: n.beams, tuplet: n.tuplet, notes: [],
-        artic: n.artic, fermata: n.fermata, lyrics: n.lyrics,
+        artic: [], marks: [], fermata: n.fermata, lyrics: n.lyrics,
       });
     }
-    elements.get(n.el).notes.push(n);
+    const e = elements.get(n.el);
+    e.notes.push(n);
+    // A chord's marks may sit on any of its notes; the chord shows each once.
+    for (const a of n.artic) if (!e.artic.includes(a)) e.artic.push(a);
+    for (const m of n.marks) if (!e.marks.includes(m)) e.marks.push(m);
   }
   const elementList = [...elements.values()].sort((a, b) => a.start - b.start);
   const beamGroups = notes.some(n => n.beams?.length)
@@ -240,6 +247,8 @@ export function finalizeScore(raw, tempoScale = 1) {
     beamGroups,
     slurs,
     techniques: raw.techniques ?? [], // tab: hammer-ons, pull-offs, slides
+    texts: raw.texts ?? [],           // expression/staff text, rehearsal marks, segno/coda, tempo marks
+    lines: raw.lines ?? [],           // "let ring"/"P.M."/"cresc." lines, pedal, vibrato and trill lines
     tuplets: raw.tuplets ?? [],
     dynamics: raw.dynamics ?? [],
     wedges: raw.wedges ?? [],

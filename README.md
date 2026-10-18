@@ -33,11 +33,22 @@ Notation drawn:
 - grace notes (shown small, played just before their main note)
 - clef, key and time signature changes
 - dynamics (p…ff, sfz…) and crescendo/diminuendo hairpins
-- articulations (staccato, staccatissimo, accent, tenuto, marcato) and fermatas
+- articulations (accent, staccato, staccatissimo, tenuto, portato, marcato, stress) and fermatas
+- ornaments: trills (with their wavy line), mordents, turns, tremolo slashes, arpeggios
+- string and guitar marks:
+  - harmonics, open (o) and muted (+), up and down bow, snap pizzicato
+  - tapping, fingering and plucking letters, vibrato lines
+  - dead notes (×), scoops, plops, doits and fall-offs
+- breath marks and caesuras
+- text and lines:
+  - expression and staff text (*dolce*, "let ring", "P.M."…) with their dashed or solid lines
+  - rehearsal marks, segno and coda
+  - tempo marks
+  - pedal marks
 - lyrics (all verses), with hyphens, lighting up as they're sung
 - repeat signs and 1st/2nd endings
 
-Each of these can be switched off under **Notation**. Not drawn: text expressions (like *dolce*), pedal marks.
+Each of these can be switched off under **Notation**: *articulations & ornaments* covers the marks on notes, *text & lines* the rest. Not drawn: chord symbols, 8va lines, two-note tremolos.
 
 **Guitar tab:** a tablature staff is drawn as tab: fret numbers on the strings, with the character landing on top of them. Also drawn:
 - hammer-ons and pull-offs (an arc marked H or P)
